@@ -57,19 +57,31 @@ end;
     # create the abstract matrix
     K = LaplaceMatrix(X,Y)
 
+    tol = sqrt(eps())
+
     Xclt = Yclt = ClusterTree(X)
     adm = StrongAdmissibilityStd()
-    comp = PartialACA(;atol=1e-6)
+    comp = PartialACA(;rtol=tol)
 
     H = assemble_hmatrix(K,Xclt,Yclt;adm,comp,threads=false,distributed=false)
     T = eltype(H)
     b = rand(T,n)
 
     x_exact = gmres(H,b)
-    x_approx, = igmres(H,b) #no mention to tolerance will make algorithm use tol ~ 1e-8
 
-    @test norm(H*x_approx - b) < sqrt(eps())
-    @test norm(x_approx - x_exact) / norm(x_exact) < sqrt(eps())
+    # constant precision => equivalent to standard (exact) GMRES
+    x_constant_precision, = igmres(H,b; tol, precision_strategy=(res,tol)->tol)
+
+    @test norm(H*x_constant_precision - b) < tol
+    @test norm(x_constant_precision - x_exact) / norm(x_exact) < tol
+
+    # adaptive precision (rel_to_eps), relaxation heuristic from Simoncini &
+    # Szyld 2003 (SIAM J. Sci. Comput.); true residual only bounded within a
+    # constant factor of tol, hence the safety margin below
+    x_adaptive_precision, = igmres(H,b; tol)
+
+    @test norm(H*x_adaptive_precision - b) < 10 * tol
+    @test norm(x_adaptive_precision - x_exact) / norm(x_exact) < 10 * tol
 end;
 
 # @testset "check least squares solver" begin
