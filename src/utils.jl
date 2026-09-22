@@ -50,7 +50,7 @@ end
 
 function my_arnoldi!(Q, H, A::AbstractMatrix, current_it)
     dummy_v = similar(Q[current_it])
-    mul!(dummy_v,A,Q[current_it],1,0;threads=false)
+    mul!(dummy_v,A,Q[current_it],1,0)
     push!(Q, dummy_v) # heavy part should be here
     push!(H,zeros(current_it+1))
     for j = 1:current_it
@@ -120,6 +120,7 @@ end
 
 Converts the residue from iteration k-1 and overall desired tolerance into and eps we'll use to approximate the original problem's matrix A.
 
+Relaxation heuristic from Simoncini & Szyld 2003 (SIAM J. Sci. Comput.).
 """
 function rel_to_eps(res::Float64, tol::Float64)
     return min((tol/min(res,1)),1)
@@ -155,7 +156,7 @@ function igmres_tolstudy(A, b;maxiter=size(A, 2), restart=min(length(b), size(A,
     push!(residuals_tilde,copy(b))
     push!(residuals_normal,res)
     current_perror = Float64
-    A_iterable = HMatrices.ITerm(A,res)
+    A_iterable = A isa HMatrices.HMatrix ? HMatrices.ITerm(A,res) : A
     H_singvalues = Vector{Float64}()
     bound_right4 = Vector{Float64}()
     while it < maxiter
@@ -176,16 +177,16 @@ function igmres_tolstudy(A, b;maxiter=size(A, 2), restart=min(length(b), size(A,
 
 
             ###Transformation of current residue and overall tolerance in the new error we'll use
-            
+
             current_perror = rel_to_eps(res,tol)
-            
-            A_iterable.rtol = current_perror
+
+            A_iterable isa HMatrices.ITerm && (A_iterable.rtol = current_perror)
             ###Arnold's iteration inside GMRES to use Q,H from past iterations
             #----------------------------------------------
             my_arnolditoltest!(Q, H, A_iterable, k)#no new vector is created, everything is done directly in H and Q
             #---------------------------#
 
-            ###First bound study, using (4.4) from the article, before the transformation of H into a upper triangular matrix            
+            ###First bound study, using (4.4) from the article, before the transformation of H into a upper triangular matrix
             dummy_right = 0
             for n=1:k
                 dummy_right+=rel_to_eps(norm(residuals_tilde[n]),tol)*abs(x[n])
@@ -235,7 +236,7 @@ function igmres_tolstudy(A, b;maxiter=size(A, 2), restart=min(length(b), size(A,
                 println("Iteration: ", it, " Current residual: ", res)
             end
 
-            if res/bheta < tol 
+            if res/bheta < tol
                 y = zero(x)
                 for n = 1:k
                     y += Q[n] * x[n]
@@ -243,7 +244,7 @@ function igmres_tolstudy(A, b;maxiter=size(A, 2), restart=min(length(b), size(A,
                 return y,bound_right4, H_singvalues,residuals_tilde, it
             end
         end
-    end 
+    end
     throw("Maximum iteration reached")
 end
 
@@ -266,7 +267,7 @@ function igmres_tolstudy2(A, b;maxiter=size(A, 2), restart=min(length(b), size(A
     push!(residuals_tilde,copy(b))
     push!(residuals_normal,res)
     current_perror = Float64
-    A_iterable = HMatrices.ITerm(A,res)
+    A_iterable = A isa HMatrices.HMatrix ? HMatrices.ITerm(A,res) : A
     H_singvalues = Vector{Float64}()
     bound_right4 = Vector{Float64}()
     while it < maxiter
@@ -292,7 +293,7 @@ function igmres_tolstudy2(A, b;maxiter=size(A, 2), restart=min(length(b), size(A
             else
                 current_perror = rel_to_eps(H_singvalues[k-1],res,tol)
             end
-            A_iterable.rtol = current_perror
+            A_iterable isa HMatrices.ITerm && (A_iterable.rtol = current_perror)
             ###Arnold's iteration inside GMRES to use Q,H from past iterations
             #----------------------------------------------
             my_arnolditoltest!(Q, H, A_iterable, k)#no new vector is created, everything is done directly in H and Q
@@ -381,7 +382,7 @@ function igmres_tolstudy3(A, b;maxiter=size(A, 2), restart=min(length(b), size(A
     push!(residuals_tilde_true,res)
     push!(residuals_tilde,res)
     current_perror = Float64
-    A_iterable = HMatrices.ITerm(A,res)
+    A_iterable = A isa HMatrices.HMatrix ? HMatrices.ITerm(A,res) : A
 
     H_singvalues = Vector{Float64}()
     bound_left4 = Vector{Float64}()
@@ -413,7 +414,7 @@ function igmres_tolstudy3(A, b;maxiter=size(A, 2), restart=min(length(b), size(A
             else
                 current_perror = rel_to_eps(H_singvalues[k-1],res,tol)
             end
-                A_iterable.rtol = current_perror
+                A_iterable isa HMatrices.ITerm && (A_iterable.rtol = current_perror)
             ###Arnold's iteration inside GMRES to use Q,H from past iterations
             #----------------------------------------------
             my_arnoldi!(Q, H, A_iterable, k)#no new vector is created, everything is done directly in H and Q

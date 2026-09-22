@@ -659,7 +659,9 @@ version = "1.2.9"
 
 [[deps.HMatrices]]
 deps = ["Distributed", "LinearAlgebra", "Printf", "RecipesBase", "SparseArrays", "StaticArrays", "Statistics"]
-path = "/home/dudu/.julia/dev/HMatrices"
+git-tree-sha1 = "38608db7c15e163a0df3ddc3cb14e703a5d2de7c"
+repo-rev = "inexact-hmatrix"
+repo-url = "https://github.com/IntegralEquations/HMatrices.jl"
 uuid = "8646bddf-ab1c-4fa7-9c51-ba187d647618"
 version = "0.2.8"
 
@@ -1021,7 +1023,7 @@ uuid = "4b2f31a3-9ecc-558c-b454-b3730dcb73e9"
 version = "2.40.1+0"
 
 [[deps.Librsvg_jll]]
-deps = ["Artifacts", "JLLWrappers", "Libdl", "Pango_jll", "Pkg", "gdk_pixbuf_jll"]
+deps = ["Artifacts", "JLLWrappers", "Libdl", "Pango_jll", "Pkg", "XML2_jll", "gdk_pixbuf_jll"]
 git-tree-sha1 = "ae0923dab7324e6bc980834f709c4cd83dd797ed"
 uuid = "925c91fb-5dd6-59dd-8e8c-345e74382d89"
 version = "2.54.5+0"

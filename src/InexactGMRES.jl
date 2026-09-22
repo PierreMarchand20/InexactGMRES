@@ -10,9 +10,14 @@ include("utils.jl")
 
 
 """
-    igmres(...)
+    igmres(A, b; maxiter, restart, see_r, tol, precision_strategy=rel_to_eps)
+
+`precision_strategy(res, tol)` computes the relative tolerance used for the
+approximate matrix-vector product at each iteration, given the current
+residual `res` and the overall target `tol`. Pass a custom function to use a
+different schedule than the default (see [`rel_to_eps`](@ref)).
 """
-function igmres(A, b;maxiter=size(A, 2), restart=min(length(b), size(A,2)), see_r=false, tol=sqrt(eps()))
+function igmres(A, b;maxiter=size(A, 2), restart=min(length(b), size(A,2)), see_r=false, tol=sqrt(eps()), precision_strategy=rel_to_eps)
     #choose type to create vectors and matrices
     TA = eltype(A)
     Tb = eltype(b)
@@ -27,7 +32,7 @@ function igmres(A, b;maxiter=size(A, 2), restart=min(length(b), size(A,2)), see_
     m = restart
     res = bheta
     current_perror = Float64
-    A_iterable = HMatrices.ITerm(A,res)
+    A_iterable = A isa HMatrices.HMatrix ? HMatrices.ITerm(A,res) : A
     while it < maxiter
         Q = Vector{Vector{T}}()
         H = Vector{Vector{T}}()
@@ -45,8 +50,8 @@ function igmres(A, b;maxiter=size(A, 2), restart=min(length(b), size(A,2)), see_
 
 
             ###Transformation of current residue and overall tolerance in the new error we'll use
-            current_perror = rel_to_eps(res,tol)
-            A_iterable.rtol = current_perror
+            current_perror = precision_strategy(res,tol)
+            A_iterable isa HMatrices.ITerm && (A_iterable.rtol = current_perror)
             ###Arnold's iteration inside GMRES to use Q,H from past iterations
             #----------------------------------------------
             my_arnoldi!(Q, H, A_iterable, k)#no new vector is created, everything is done directly in H and Q
@@ -107,8 +112,8 @@ function test_gmres(A, b;maxiter=size(A, 2), restart=min(length(b), maxiter), se
     m = restart
     res = bheta
     current_perror = Float64
-    
-    A_iterable = HMatrices.ITerm(A,res)
+
+    A_iterable = A isa HMatrices.HMatrix ? HMatrices.ITerm(A,res) : A
     while it < maxiter
         Q = Vector{Vector{T}}()
         H = Vector{Vector{T}}()
@@ -123,10 +128,10 @@ function test_gmres(A, b;maxiter=size(A, 2), restart=min(length(b), maxiter), se
             if it >= maxiter
                 break
             end
-            
+
 
             current_perror = rel_to_eps(res,tol)
-            A_iterable.rtol = current_perror
+            A_iterable isa HMatrices.ITerm && (A_iterable.rtol = current_perror)
             ###Arnold's iteration inside GMRES to use Q,H from past iterations
             #----------------------------------------------
             my_arnoldi!(Q, H, A, k)
