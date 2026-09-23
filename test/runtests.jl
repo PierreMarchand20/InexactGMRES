@@ -37,6 +37,12 @@ using LoopVectorization
     @test norm(A_slow * x_slow - b) < sqrt(eps())
     @test fast_it < slow_it
 
+    # exact_gmres should agree with a standard library implementation
+    x_exact_gmres, = InexactGMRES.exact_gmres(A, b)
+    x_stdlib_gmres = gmres(A, b)
+
+    @test norm(A * x_exact_gmres - b) < sqrt(eps())
+    @test norm(x_exact_gmres - x_stdlib_gmres) / norm(x_stdlib_gmres) < sqrt(eps())
 end;
 
 @testset "check HMatrix implementation" begin
