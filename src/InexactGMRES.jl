@@ -44,7 +44,7 @@ function igmres(A, b;maxiter=size(A, 2), restart=min(length(b), size(A,2)), see_
         v = b / bheta
         push!(Q, v)
         for k = 1:m
-            if it > maxiter
+            if it >= maxiter
                 break
             end
 
@@ -98,22 +98,20 @@ end
 
 ###exact implementation, for comparing reasons
 
-function test_gmres(A, b;maxiter=size(A, 2), restart=min(length(b), maxiter), see_r=false, tol=sqrt(eps()))
+function exact_gmres(A, b;maxiter=size(A, 2), restart=min(length(b), size(A,2)), see_r=false, tol=sqrt(eps()))
     #choose type to create vectors and matrices
     TA = eltype(A)
     Tb = eltype(b)
     T = promote_type(TA, Tb)
 
-    
+
     x = zeros(T, size(b))#will hold answer
     residuals = Vector{Float64}()
     it = 0
     bheta = norm(b)
     m = restart
     res = bheta
-    current_perror = Float64
 
-    A_iterable = A isa HMatrices.HMatrix ? HMatrices.ITerm(A,res) : A
     while it < maxiter
         Q = Vector{Vector{T}}()
         H = Vector{Vector{T}}()
@@ -129,9 +127,6 @@ function test_gmres(A, b;maxiter=size(A, 2), restart=min(length(b), maxiter), se
                 break
             end
 
-
-            current_perror = rel_to_eps(res,tol)
-            A_iterable isa HMatrices.ITerm && (A_iterable.rtol = current_perror)
             ###Arnold's iteration inside GMRES to use Q,H from past iterations
             #----------------------------------------------
             my_arnoldi!(Q, H, A, k)

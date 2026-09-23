@@ -117,7 +117,7 @@ for i in eachindex(range_values)
     H_iprod = HMatrices.ITerm(L, 0.0)
 
     benchr_approx = @benchmark igmres($L,$g,tol=$σ) 
-    benchr_exact = @benchmark InexactGMRES.test_gmres($L,$g,tol=$σ)
+    benchr_exact = @benchmark InexactGMRES.exact_gmres($L,$g,tol=$σ)
     
 
     results_exact[i] = minimum(benchr_exact).time

@@ -152,7 +152,7 @@ H_iprod = HMatrices.ITerm(L, 0.0)
 println("Current progress: ", repeat(" ", 32), "0%")
 for i = 1:length(range_values)
     benchr_approx = @benchmark igmres($L, $g, tol=range_values[$i])
-    benchr_exact = @benchmark InexactGMRES.test_gmres($L, $g, tol=range_values[$i])
+    benchr_exact = @benchmark InexactGMRES.exact_gmres($L, $g, tol=range_values[$i])
     #benchr_exact = @benchmark gmres($L,$g;reltol=range_values[$i])
 
 
