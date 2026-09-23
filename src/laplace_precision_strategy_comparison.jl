@@ -10,7 +10,7 @@ n = 10_000
 tol = sqrt(eps())
 
 Point2D = SVector{2,Float64}
-X = Y = [Point2D(sin(i * 2π / n), cos(i * 2π / n)) for i in 0:n-1]
+X = Y = [Point2D(sin(i * 2π / n), cos(i * 2π / n)) for i in 0:(n-1)]
 
 struct LaplaceMatrix <: AbstractMatrix{Float64}
     X::Vector{Point2D}
@@ -26,29 +26,45 @@ adm = StrongAdmissibilityStd()
 comp = PartialACA(; rtol=tol)
 H = assemble_hmatrix(K, Xclt, Yclt; adm, comp, threads=false, distributed=false)
 
+println(H) # includes number of leaves, rank range, and compression ratio
+
 T = eltype(H)
 b = rand(T, n)
 
-## Reference: exact GMRES, also exposing its Hessenberg matrix at convergence
-y_exact, residuals_exact, m, H_m = InexactGMRES.exact_gmres(H, b; tol, return_H=true)
+## Run exact_gmres (for sigma_m) and both igmres precision strategies
+bound_factor = 1.
+study = InexactGMRES.igmres_precision_study(H, b, tol; bound_factor)
+(; sigma_m, residuals_sigma, true_residuals_sigma, residual_gap_sigma, bound_right4_sigma, sigma_heuristic, it_sigma,
+    residuals_constant_factor, true_residuals_constant_factor, residual_gap_constant_factor,
+    bound_right4_constant_factor, constant_factor_heuristic, it_constant_factor) = study
 
-sigma_m = svd(H_m).S[end] # smallest singular value of H_m
+# residual_gap_* and bound_right4_* are in absolute units (matching the
+# paper); normalize by ||b|| so they sit on the same relative scale as the
+# other (already-relative) curves on these plots
+bheta = norm(b)
+gap_sigma = residual_gap_sigma ./ bheta
+gap_constant_factor = residual_gap_constant_factor ./ bheta
+bound_sigma = bound_right4_sigma ./ bheta
+bound_constant_factor = bound_right4_constant_factor ./ bheta
 
-## igmres with a constant bound factor sigma_m plugged into rel_to_eps
-y_sigma, residuals_sigma, it_sigma = igmres(H, b; tol,
-    precision_strategy=(res, t) -> InexactGMRES.rel_to_eps(sigma_m, res, t))
+## Plot 1: sigma(H_m) heuristic, residual decrease and heuristic value
+p1 = Plots.plot(1:it_sigma, residuals_sigma; label="igmres residual (internal)", yaxis=:log, marker=:diamond)
+Plots.plot!(p1, 1:it_sigma, true_residuals_sigma; label="true residual", marker=:circle)
+Plots.plot!(p1, 1:it_sigma, sigma_heuristic; label="heuristic value (matvec rtol)", marker=:utriangle, linestyle=:dash)
+Plots.plot!(p1, 1:it_sigma, gap_sigma; label="||true - internal||", marker=:star5, linestyle=:dot)
+Plots.plot!(p1, 1:it_sigma, bound_sigma; label="Simoncini-Szyld bound (4.4)", marker=:rect, linestyle=:dashdot)
+Plots.xlabel!(p1, "Iteration")
+Plots.ylabel!(p1, "Relative residual / matvec rtol")
+Plots.title!(p1, "igmres with σ(H_m) heuristic")
+Plots.savefig(p1, "laplace_sigma_heuristic.png")
 
-## igmres with a flat, iteration-independent matvec tolerance
-flat_rtol = 1e-3
-y_flat, residuals_flat, it_flat = igmres(H, b; tol,
-    precision_strategy=(res, t) -> flat_rtol)
-
-## Plot residual decrease for all three
-p = Plots.plot(1:m, residuals_exact; label="exact GMRES", yaxis=:log, marker=:circle)
-Plots.plot!(p, 1:it_sigma, residuals_sigma; label="igmres, σ(H_m) heuristic", marker=:diamond)
-Plots.plot!(p, 1:it_flat, residuals_flat; label="igmres, flat rtol=$flat_rtol", marker=:rect)
-Plots.xlabel!(p, "Iteration")
-Plots.ylabel!(p, "Relative residual")
-Plots.title!(p, "Residual decrease: exact GMRES vs. igmres precision strategies")
-display(p)
-Plots.savefig(p, "laplace_precision_strategy_comparison.png")
+## Plot 2: constant bound factor heuristic, residual decrease and heuristic value
+p2 = Plots.plot(1:it_constant_factor, residuals_constant_factor; label="igmres residual (internal)", yaxis=:log, marker=:diamond)
+Plots.plot!(p2, 1:it_constant_factor, true_residuals_constant_factor; label="true residual", marker=:circle)
+Plots.plot!(p2, 1:it_constant_factor, constant_factor_heuristic; label="heuristic value (matvec rtol)", marker=:utriangle, linestyle=:dash)
+Plots.plot!(p2, 1:it_constant_factor, gap_constant_factor; label="||true - internal||", marker=:star5, linestyle=:dot)
+Plots.plot!(p2, 1:it_constant_factor, bound_constant_factor; label="Simoncini-Szyld bound (4.4)", marker=:rect, linestyle=:dashdot)
+Plots.xlabel!(p2, "Iteration")
+Plots.ylabel!(p2, "Relative residual / matvec rtol")
+Plots.title!(p2, "igmres with constant bound factor ($bound_factor) heuristic")
+Plots.savefig(p2, "laplace_constant_factor_heuristic.png")
