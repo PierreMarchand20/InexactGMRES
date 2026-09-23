@@ -98,7 +98,7 @@ end
 
 ###exact implementation, for comparing reasons
 
-function exact_gmres(A, b;maxiter=size(A, 2), restart=min(length(b), size(A,2)), see_r=false, tol=sqrt(eps()))
+function exact_gmres(A, b;maxiter=size(A, 2), restart=min(length(b), size(A,2)), see_r=false, tol=sqrt(eps()), return_H=false)
     #choose type to create vectors and matrices
     TA = eltype(A)
     Tb = eltype(b)
@@ -148,13 +148,20 @@ function exact_gmres(A, b;maxiter=size(A, 2), restart=min(length(b), size(A,2)),
             if see_r
                 println("Iteration: ", it, " Current residual: ", res)
             end
-            
+
             if res < tol #ta zoado esse calculo aqui tb
                 y = zero(x)
                 for n = 1:k
                     y += Q[n] * x[n]
                 end
                 # println("Finished at iteration: ", it + 1, " Final residual: ", res)
+                if return_H
+                    Hmat = zeros(T, k+1, k)
+                    for j = 1:k
+                        Hmat[1:j+1, j] = H[j]
+                    end
+                    return y, residuals, it, Hmat
+                end
                 return y, residuals, it
             end
         end
