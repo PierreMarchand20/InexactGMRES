@@ -11,6 +11,7 @@ using LoopVectorization
 @test true == true
 
 @testset "check convergence" begin
+    Random.seed!(1234)
     m = 1000
     n_iterations = 18
     A = Matrix((2.0 + 0im) * I, m, m) + 0.5 * randn(m, m) / sqrt(m)
@@ -37,12 +38,14 @@ using LoopVectorization
     @test norm(A_slow * x_slow - b) < sqrt(eps())
     @test fast_it < slow_it
 
-    # exact_gmres should agree with a standard library implementation
+    # exact_gmres should agree with a standard library implementation; each
+    # converges to its own ~sqrt(eps()) tolerance independently, so their
+    # gap needs a safety margin rather than the bare tolerance itself
     x_exact_gmres, = InexactGMRES.exact_gmres(A, b)
     x_stdlib_gmres = gmres(A, b)
 
     @test norm(A * x_exact_gmres - b) < sqrt(eps())
-    @test norm(x_exact_gmres - x_stdlib_gmres) / norm(x_stdlib_gmres) < sqrt(eps())
+    @test norm(x_exact_gmres - x_stdlib_gmres) / norm(x_stdlib_gmres) < 10 * sqrt(eps())
 end;
 
 @testset "check HMatrix implementation" begin
