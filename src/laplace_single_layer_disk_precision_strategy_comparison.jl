@@ -53,6 +53,7 @@ Plots.plot!(p1, 1:it_sigma, true_residuals_sigma; label="true residual", marker=
 Plots.plot!(p1, 1:it_sigma, sigma_heuristic; label="heuristic value (matvec rtol)", marker=:utriangle, linestyle=:dash)
 Plots.plot!(p1, 1:it_sigma, gap_sigma; label="||true - internal||", marker=:star5, linestyle=:dot)
 Plots.plot!(p1, 1:it_sigma, bound_sigma; label="Simoncini-Szyld bound (4.4)", marker=:rect, linestyle=:dashdot)
+Plots.hline!(p1, [tol]; label="H-matrix assembly rtol", color=:black)
 Plots.xlabel!(p1, "Iteration")
 Plots.ylabel!(p1, "Relative residual / matvec rtol")
 Plots.title!(p1, "igmres with σ(H_m) heuristic")
@@ -64,6 +65,7 @@ Plots.plot!(p2, 1:it_constant_factor, true_residuals_constant_factor; label="tru
 Plots.plot!(p2, 1:it_constant_factor, constant_factor_heuristic; label="heuristic value (matvec rtol)", marker=:utriangle, linestyle=:dash)
 Plots.plot!(p2, 1:it_constant_factor, gap_constant_factor; label="||true - internal||", marker=:star5, linestyle=:dot)
 Plots.plot!(p2, 1:it_constant_factor, bound_constant_factor; label="Simoncini-Szyld bound (4.4)", marker=:rect, linestyle=:dashdot)
+Plots.hline!(p2, [tol]; label="H-matrix assembly rtol", color=:black)
 Plots.xlabel!(p2, "Iteration")
 Plots.ylabel!(p2, "Relative residual / matvec rtol")
 Plots.title!(p2, "igmres with constant bound factor ($bound_factor) heuristic")
@@ -77,3 +79,19 @@ Plots.xlabel!(p3, "Point index")
 Plots.ylabel!(p3, "Solution")
 Plots.title!(p3, "Solution (Laplace disk)")
 Plots.savefig(p3, "laplace_disk_solution.png")
+
+## Plot 4: effective compression ratio used by each heuristic's matvec, per
+## iteration -- how much of H is actually touched at the matvec rtol each
+## strategy requests, vs. the compression already baked into H's own
+## (static) assembly
+eff_comp_sigma = InexactGMRES.effective_compression_ratio(H, sigma_heuristic)
+eff_comp_constant_factor = InexactGMRES.effective_compression_ratio(H, constant_factor_heuristic)
+static_ratio = HMatrices.compression_ratio(H)
+
+p4 = Plots.plot(1:it_sigma, eff_comp_sigma; label="σ(H_m) heuristic", marker=:utriangle)
+Plots.plot!(p4, 1:it_constant_factor, eff_comp_constant_factor; label="constant bound factor", marker=:rect)
+Plots.hline!(p4, [static_ratio]; label="static compression_ratio(H)", linestyle=:dash)
+Plots.xlabel!(p4, "Iteration")
+Plots.ylabel!(p4, "Effective compression ratio")
+Plots.title!(p4, "Effective H-matrix compression during matvec (Laplace disk)")
+Plots.savefig(p4, "laplace_disk_compression.png")

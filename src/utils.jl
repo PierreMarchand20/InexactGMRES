@@ -160,3 +160,43 @@ function igmres_precision_study(A, b, tol; bound_factor=1.0)
         bound_right4_constant_factor, constant_factor_heuristic, it_constant_factor)
 end
 
+"""
+    effective_compression_ratio(H::HMatrices.HMatrix, rtol)
+
+Like `HMatrices.compression_ratio(H)`, but counting only the rank-1 terms
+`HMatrices.ITerm`'s inexact matvec would actually use at the given `rtol`
+for each admissible (low-rank) leaf -- `findfirst(x -> x <= rtol,
+R.rel_er)`, the same truncation `ITerm`'s own `mul!` applies -- instead of
+each leaf's full stored rank. Full (non-admissible) leaves always cost
+their dense size, same as the exact product. A value higher than
+`HMatrices.compression_ratio(H)` means the inexact product at this `rtol`
+is, in effect, using less of the matrix than its own (static) compression
+already keeps.
+
+    effective_compression_ratio(H, rtols::AbstractVector)
+
+Broadcasts over a sequence of per-iteration `rtol` values (e.g. the
+`sigma_heuristic`/`constant_factor_heuristic` arrays from
+[`igmres_precision_study`](@ref)), returning one ratio per iteration.
+"""
+function effective_compression_ratio(H::HMatrices.HMatrix, rtol::Float64)
+    total = length(H)
+    used = 0
+    for leaf in HMatrices.leaves(H)
+        m, n = size(leaf)
+        if HMatrices.isadmissible(leaf)
+            R = HMatrices.data(leaf)
+            k = findfirst(x -> x <= rtol, R.rel_er)
+            k = isnothing(k) ? size(R.A, 2) : k
+            used += k * (m + n)
+        else
+            used += m * n
+        end
+    end
+    return total / used
+end
+
+function effective_compression_ratio(H::HMatrices.HMatrix, rtols::AbstractVector{Float64})
+    return effective_compression_ratio.(Ref(H), rtols)
+end
+

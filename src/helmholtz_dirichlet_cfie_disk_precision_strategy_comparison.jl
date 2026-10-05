@@ -2,6 +2,7 @@ using Inti
 using StaticArrays
 using LinearAlgebra
 using SparseArrays
+using HMatrices
 using Plots
 using InexactGMRES
 
@@ -70,6 +71,7 @@ Plots.plot!(p1, 1:it_sigma, true_residuals_sigma; label="true residual", marker=
 Plots.plot!(p1, 1:it_sigma, sigma_heuristic; label="heuristic value (matvec rtol)", marker=:utriangle, linestyle=:dash)
 Plots.plot!(p1, 1:it_sigma, gap_sigma; label="||true - internal||", marker=:star5, linestyle=:dot)
 Plots.plot!(p1, 1:it_sigma, bound_sigma; label="Simoncini-Szyld bound (4.4)", marker=:rect, linestyle=:dashdot)
+Plots.hline!(p1, [tol]; label="H-matrix assembly rtol", color=:black)
 Plots.xlabel!(p1, "Iteration")
 Plots.ylabel!(p1, "Relative residual / matvec rtol")
 Plots.title!(p1, "igmres with σ(H_m) heuristic (Helmholtz disk)")
@@ -81,6 +83,7 @@ Plots.plot!(p2, 1:it_constant_factor, true_residuals_constant_factor; label="tru
 Plots.plot!(p2, 1:it_constant_factor, constant_factor_heuristic; label="heuristic value (matvec rtol)", marker=:utriangle, linestyle=:dash)
 Plots.plot!(p2, 1:it_constant_factor, gap_constant_factor; label="||true - internal||", marker=:star5, linestyle=:dot)
 Plots.plot!(p2, 1:it_constant_factor, bound_constant_factor; label="Simoncini-Szyld bound (4.4)", marker=:rect, linestyle=:dashdot)
+Plots.hline!(p2, [tol]; label="H-matrix assembly rtol", color=:black)
 Plots.xlabel!(p2, "Iteration")
 Plots.ylabel!(p2, "Relative residual / matvec rtol")
 Plots.title!(p2, "igmres with constant bound factor ($bound_factor) heuristic (Helmholtz disk)")
@@ -112,3 +115,19 @@ Plots.xlabel!(p4, "x")
 Plots.ylabel!(p4, "y")
 Plots.title!(p4, "Total field Re(u) (Helmholtz disk)")
 Plots.savefig(p4, "helmholtz_disk_solution.png")
+
+## Plot 5: effective compression ratio used by each heuristic's matvec, per
+## iteration -- how much of L is actually touched at the matvec rtol each
+## strategy requests, vs. the compression already baked into L's own
+## (static) assembly
+eff_comp_sigma = InexactGMRES.effective_compression_ratio(L, sigma_heuristic)
+eff_comp_constant_factor = InexactGMRES.effective_compression_ratio(L, constant_factor_heuristic)
+static_ratio = HMatrices.compression_ratio(L)
+
+p5 = Plots.plot(1:it_sigma, eff_comp_sigma; label="σ(H_m) heuristic", marker=:utriangle)
+Plots.plot!(p5, 1:it_constant_factor, eff_comp_constant_factor; label="constant bound factor", marker=:rect)
+Plots.hline!(p5, [static_ratio]; label="static compression_ratio(L)", linestyle=:dash)
+Plots.xlabel!(p5, "Iteration")
+Plots.ylabel!(p5, "Effective compression ratio")
+Plots.title!(p5, "Effective H-matrix compression during matvec (Helmholtz disk)")
+Plots.savefig(p5, "helmholtz_disk_compression.png")
