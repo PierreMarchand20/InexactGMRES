@@ -34,8 +34,8 @@ b = rand(T, n)
 ## Run exact_gmres (for sigma_m) and both igmres precision strategies
 bound_factor = 1.
 study = InexactGMRES.igmres_precision_study(H, b, tol; bound_factor)
-(; sigma_m, residuals_sigma, true_residuals_sigma, residual_gap_sigma, bound_right4_sigma, sigma_heuristic, it_sigma,
-    residuals_constant_factor, true_residuals_constant_factor, residual_gap_constant_factor,
+(; sigma_m, y_exact, y_sigma, residuals_sigma, true_residuals_sigma, residual_gap_sigma, bound_right4_sigma, sigma_heuristic, it_sigma,
+    y_constant_factor, residuals_constant_factor, true_residuals_constant_factor, residual_gap_constant_factor,
     bound_right4_constant_factor, constant_factor_heuristic, it_constant_factor) = study
 
 # residual_gap_* and bound_right4_* are in absolute units (matching the
@@ -56,7 +56,7 @@ Plots.plot!(p1, 1:it_sigma, bound_sigma; label="Simoncini-Szyld bound (4.4)", ma
 Plots.xlabel!(p1, "Iteration")
 Plots.ylabel!(p1, "Relative residual / matvec rtol")
 Plots.title!(p1, "igmres with σ(H_m) heuristic")
-Plots.savefig(p1, "laplace_sigma_heuristic.png")
+Plots.savefig(p1, "laplace_disk_sigma_heuristic.png")
 
 ## Plot 2: constant bound factor heuristic, residual decrease and heuristic value
 p2 = Plots.plot(1:it_constant_factor, residuals_constant_factor; label="igmres residual (internal)", yaxis=:log, marker=:diamond)
@@ -67,4 +67,13 @@ Plots.plot!(p2, 1:it_constant_factor, bound_constant_factor; label="Simoncini-Sz
 Plots.xlabel!(p2, "Iteration")
 Plots.ylabel!(p2, "Relative residual / matvec rtol")
 Plots.title!(p2, "igmres with constant bound factor ($bound_factor) heuristic")
-Plots.savefig(p2, "laplace_constant_factor_heuristic.png")
+Plots.savefig(p2, "laplace_disk_constant_factor_heuristic.png")
+
+## Plot 3: solution comparison
+p3 = Plots.plot(1:n, y_exact; label="exact", linewidth=2)
+Plots.plot!(p3, 1:n, y_sigma; label="σ(H_m) heuristic", linestyle=:dash)
+Plots.plot!(p3, 1:n, y_constant_factor; label="constant bound factor", linestyle=:dot)
+Plots.xlabel!(p3, "Point index")
+Plots.ylabel!(p3, "Solution")
+Plots.title!(p3, "Solution (Laplace disk)")
+Plots.savefig(p3, "laplace_disk_solution.png")

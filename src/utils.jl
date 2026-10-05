@@ -127,16 +127,17 @@ igmres runs track the true residual (`track_true_residual=true`) and the
 Simoncini & Szyld bound (`track_bound=true`) at each iteration, and record
 the matvec rtol actually used by their precision strategy.
 
-Returns a NamedTuple with, for each strategy, the internal residuals, true
-residuals, residual_gap (`norm(r_k - r̃_k)`, in absolute units), bound_right4,
-recorded heuristic values, and iteration count, plus `sigma_m` itself.
+Returns a NamedTuple with, for each strategy, the solution `y`, the internal
+residuals, true residuals, residual_gap (`norm(r_k - r̃_k)`, in absolute
+units), bound_right4, recorded heuristic values, and iteration count, plus
+`sigma_m` and the exact solution `y_exact` (from `exact_gmres`) themselves.
 """
 function igmres_precision_study(A, b, tol; bound_factor=1.0)
-    _, _, m, H_m = exact_gmres(A, b; tol, return_H=true)
+    y_exact, _, m, H_m = exact_gmres(A, b; tol, return_H=true)
     sigma_m = svd(H_m).S[end]
 
     sigma_heuristic = Float64[]
-    _, residuals_sigma, it_sigma, true_residuals_sigma, residual_gap_sigma, bound_right4_sigma = igmres(A, b; tol,
+    y_sigma, residuals_sigma, it_sigma, true_residuals_sigma, residual_gap_sigma, bound_right4_sigma = igmres(A, b; tol,
         track_true_residual=true, track_bound=true,
         precision_strategy=(res, t) -> begin
             v = rel_to_eps(sigma_m/m, res, t)
@@ -145,7 +146,7 @@ function igmres_precision_study(A, b, tol; bound_factor=1.0)
         end)
 
     constant_factor_heuristic = Float64[]
-    _, residuals_constant_factor, it_constant_factor, true_residuals_constant_factor, residual_gap_constant_factor, bound_right4_constant_factor = igmres(A, b; tol,
+    y_constant_factor, residuals_constant_factor, it_constant_factor, true_residuals_constant_factor, residual_gap_constant_factor, bound_right4_constant_factor = igmres(A, b; tol,
         track_true_residual=true, track_bound=true,
         precision_strategy=(res, t) -> begin
             v = rel_to_eps(bound_factor, res, t)
@@ -153,9 +154,9 @@ function igmres_precision_study(A, b, tol; bound_factor=1.0)
             v
         end)
 
-    return (; sigma_m,
-        residuals_sigma, true_residuals_sigma, residual_gap_sigma, bound_right4_sigma, sigma_heuristic, it_sigma,
-        residuals_constant_factor, true_residuals_constant_factor, residual_gap_constant_factor,
+    return (; sigma_m, y_exact,
+        y_sigma, residuals_sigma, true_residuals_sigma, residual_gap_sigma, bound_right4_sigma, sigma_heuristic, it_sigma,
+        y_constant_factor, residuals_constant_factor, true_residuals_constant_factor, residual_gap_constant_factor,
         bound_right4_constant_factor, constant_factor_heuristic, it_constant_factor)
 end
 
