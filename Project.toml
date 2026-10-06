@@ -1,9 +1,10 @@
 name = "InexactGMRES"
 uuid = "e84be53d-90e6-46a5-8c12-c1965ae10a3a"
-authors = ["DuduGuima <eduardo.guima.dudu@gmail.com>"]
 version = "0.1.0"
+authors = ["DuduGuima <eduardo.guima.dudu@gmail.com>"]
 
 [deps]
+BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
 CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
@@ -23,4 +24,7 @@ StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [sources]
-HMatrices = {url = "https://github.com/IntegralEquations/HMatrices.jl", rev = "inexact-hmatrix"}
+HMatrices = {rev = "inexact-hmatrix", url = "https://github.com/IntegralEquations/HMatrices.jl"}
+
+[compat]
+BenchmarkTools = "1.8.0"

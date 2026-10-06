@@ -2,7 +2,7 @@
 
 julia_version = "1.13.0"
 manifest_format = "2.1"
-project_hash = "fae57ec8f53111ad22521c122f5566badd958b90"
+project_hash = "258db491359bf4773ddcf58f9c0693e6dee18c11"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -157,6 +157,13 @@ git-tree-sha1 = "8c290a1b223deaeea9aea44b235d24546da8eb98"
 registries = "General"
 uuid = "18cc8868-cbac-4acf-b575-c8ff214dc66f"
 version = "1.4.0"
+
+[[deps.BenchmarkTools]]
+deps = ["Compat", "JSON", "Logging", "PrecompileTools", "Printf", "Profile", "Statistics", "UUIDs"]
+git-tree-sha1 = "9670d3febc2b6da60a0ae57846ba74670290653f"
+registries = "General"
+uuid = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
+version = "1.8.0"
 
 [[deps.Bessels]]
 git-tree-sha1 = "4435559dc39793d53a9e3d278e185e920b4619ef"
@@ -1029,7 +1036,7 @@ uuid = "9b13fd28-a010-5f03-acff-a1bbcff69959"
 version = "1.0.0"
 
 [[deps.InexactGMRES]]
-deps = ["CSV", "DataFrames", "GLMakie", "Gmsh", "HMatrices", "Inti", "IterativeSolvers", "LinearAlgebra", "LinearMaps", "LoopVectorization", "Plots", "ProfileView", "Random", "SparseArrays", "SpecialFunctions", "StaticArrays", "Test"]
+deps = ["BenchmarkTools", "CSV", "DataFrames", "GLMakie", "Gmsh", "HMatrices", "Inti", "IterativeSolvers", "LinearAlgebra", "LinearMaps", "LoopVectorization", "Plots", "ProfileView", "Random", "SparseArrays", "SpecialFunctions", "StaticArrays", "Test"]
 path = "."
 uuid = "e84be53d-90e6-46a5-8c12-c1965ae10a3a"
 version = "0.1.0"

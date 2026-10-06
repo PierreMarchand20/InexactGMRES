@@ -7,59 +7,17 @@ using HMatrices
 using Plots
 using InexactGMRES
 
+include(joinpath(pkgdir(InexactGMRES), "src", "experiment_utils.jl"))
+
 ## Problem setup: Helmholtz scattering by a 2D cavity, Dirichlet CFIE
-## (combined field integral equation, D - ik*S) on a Gmsh-imported mesh
-## (same kernel/geometry as cavity2d_scattering_fixsize.jl, with a coarser
-## mesh so this runs quickly)
-λ = 0.25
+## (combined field integral equation, D - ik*S) on data/elliptic_cavity_2D.geo
+## (a coarser mesh than the k=50-300 frequency sweep, so this runs quickly)
+λ = 0.01
 k = 2π / λ
-θ = π / 4
 tol = sqrt(eps())
 
-meshsize = λ / 10
-gorder = 2
-qorder = 4
-
-filename = joinpath(Inti.PROJECT_ROOT, "docs", "assets", "elliptic_cavity_2D.geo")
-gmsh.initialize()
-gmsh.option.setNumber("Mesh.MeshSizeMin", meshsize)
-gmsh.option.setNumber("Mesh.MeshSizeMax", meshsize)
-gmsh.open(filename)
-gmsh.model.mesh.generate(1)
-gmsh.model.mesh.setOrder(gorder)
-msh = Inti.import_mesh(; dim=2)
-gmsh.finalize()
-
-ents = Inti.entities(msh)
-Ω = Inti.Domain(e -> Inti.geometric_dimension(e) == 2, ents)
-Γ = Inti.boundary(Ω)
-Γ_msh = view(msh, Γ)
-
-d = SVector(cos(θ), sin(θ)) # incident direction
-uᵢ = (x) -> exp(im * k * dot(x, d)) # incident plane wave
-
-## Dirichlet CFIE kernel D - ik*S, built from Inti's own single/double layer
-## kernels for the Helmholtz operator (no need to hand-derive the Hankel
-## function formulas ourselves)
-pde = Inti.Helmholtz(; k, dim=2)
-SL = Inti.SingleLayerKernel(pde)
-DL = Inti.DoubleLayerKernel(pde)
-K = let SL = SL, DL = DL, k = k
-    (t, q) -> DL(t, q) - im * k * SL(t, q)
-end
-
-Q = Inti.Quadrature(Γ_msh; qorder)
+(; L, g, pde, uᵢ, Q, meshsize) = cavity_problem(k; ε=tol)
 println("Number of quadrature points: ", length(Q))
-
-## Right-hand side given by Dirichlet trace of plane wave
-g = map(Q) do q
-    return -uᵢ(q.coords)
-end
-
-Lop = Inti.IntegralOperator(K, Q, Q)
-L = Inti.assemble_hmatrix(Lop; rtol=tol)
-Id = sparse((0.5 + 0 * im)I, size(L))
-axpy!(1.0, Id, L)
 
 println(L) # includes number of leaves, rank range, and compression ratio
 
