@@ -243,31 +243,4 @@ function exact_gmres(A, b; maxiter=size(A, 2), restart=min(length(b), size(A, 2)
     throw("Maximum iteration reached")
 end
 
-
-
-"""
-    trefethen_fast(m)
-
-Create the matrix A from Trefethen and Bau's book, formula 35.17, in examples 35.1 and 35.2
-"""
-function trefethen_fast(m)
-    A = Matrix((2.0 + 0im) * I, m, m) + 0.5 * randn(m, m) / sqrt(m)
-    D = Matrix((1.0 + 0im) * I, m, m)
-    for i = 0:(m-1)
-        D[i+1, i+1] = (-2 + 2 * sin((i * pi) / (m - 1))) + cos((i * pi) / (m - 1))im
-    end
-    return A
-end
-
-function trefethen_slow(m)
-    A = trefethen_fast(m)
-    D = Matrix((1.0 + 0im) * I, m, m)
-    for i = 0:(m-1)
-        D[i+1, i+1] = (-2 + 2 * sin((i * pi) / (m - 1))) + cos((i * pi) / (m - 1))im
-    end
-    return A + D
-end
-
-
-
 end # module InexactGMRES

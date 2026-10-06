@@ -9,3 +9,16 @@
 *.fdb_latexmk
 *.synctex.gz
 *.lof
+*.acn
+*.acr
+*.alg
+*.glg
+*.glo
+*.gls
+*.ist
+
+.DS_Store
+
+# experiment outputs written to the working directory
+/*.png
+/*.csv

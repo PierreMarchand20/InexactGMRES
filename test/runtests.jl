@@ -5,8 +5,6 @@ using InexactGMRES
 using IterativeSolvers
 using StaticArrays
 using HMatrices
-using HMatrices: RkMatrix
-using LoopVectorization
 
 @test true == true
 

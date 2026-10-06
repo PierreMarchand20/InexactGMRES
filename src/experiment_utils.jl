@@ -7,6 +7,7 @@ using StaticArrays
 using BenchmarkTools
 using DataFrames
 using CSV
+using Plots
 using InexactGMRES
 
 ## Problem builders: Helmholtz Dirichlet CFIE (D - ik*S), disk and cavity,
@@ -182,4 +183,85 @@ the `data/bad_frequencies_*.csv` files), filtered to `[kmin, kmax]`.
 function read_resonances(path; kmin=-Inf, kmax=Inf)
     ks = CSV.read(path, DataFrame; header=false)[:, 1]
     return filter(k -> kmin <= k <= kmax, ks)
+end
+
+"""
+    precision_strategy_comparison(prob, k, tol; name, label, bound_factor=1.0)
+
+Run `igmres_precision_study` on a problem built by `disk_problem`/
+`cavity_problem` (`prob`, at wavenumber `k`) and save four plots, prefixed
+by `name` and titled with `label`: per-iteration residuals/heuristic/gap/
+bound for the σ(H_m) and the constant bound factor heuristics, the
+reconstructed total field, and the effective H-matrix compression used by
+each heuristic's matvec. Returns the study.
+"""
+function precision_strategy_comparison(prob, k, tol; name, label, bound_factor=1.0)
+    (; L, g, pde, uᵢ, Q, meshsize) = prob
+    println(L) # includes number of leaves, rank range, and compression ratio
+
+    study = InexactGMRES.igmres_precision_study(L, g, tol; bound_factor)
+    (; y_exact, residuals_sigma, true_residuals_sigma, residual_gap_sigma, bound_right4_sigma, sigma_heuristic, it_sigma,
+        residuals_constant_factor, true_residuals_constant_factor, residual_gap_constant_factor,
+        bound_right4_constant_factor, constant_factor_heuristic, it_constant_factor) = study
+
+    # residual_gap_* and bound_right4_* are in absolute units (matching the
+    # paper); normalize by ||g|| so they sit on the same relative scale as
+    # the other (already-relative) curves
+    gnorm = norm(g)
+    for (strategy, title, residuals, true_residuals, gap, bound, heuristic, it) in (
+        ("sigma", "σ(H_m) heuristic", residuals_sigma, true_residuals_sigma,
+            residual_gap_sigma, bound_right4_sigma, sigma_heuristic, it_sigma),
+        ("constant_factor", "constant bound factor ($bound_factor) heuristic", residuals_constant_factor,
+            true_residuals_constant_factor, residual_gap_constant_factor, bound_right4_constant_factor,
+            constant_factor_heuristic, it_constant_factor),
+    )
+        p = Plots.plot(1:it, residuals; label="igmres residual (internal)", yaxis=:log, marker=:diamond, titlefontsize=10)
+        Plots.plot!(p, 1:it, true_residuals; label="true residual", marker=:circle)
+        Plots.plot!(p, 1:it, heuristic; label="heuristic value (matvec rtol)", marker=:utriangle, linestyle=:dash)
+        Plots.plot!(p, 1:it, gap ./ gnorm; label="||true - internal||", marker=:star5, linestyle=:dot)
+        Plots.plot!(p, 1:it, bound ./ gnorm; label="Simoncini-Szyld bound (4.4)", marker=:rect, linestyle=:dashdot)
+        Plots.hline!(p, [tol]; label="H-matrix assembly rtol", color=:black)
+        Plots.xlabel!(p, "Iteration")
+        Plots.ylabel!(p, "Relative residual / matvec rtol")
+        Plots.title!(p, "igmres with $title ($label)")
+        Plots.savefig(p, "$(name)_$(strategy)_heuristic.png")
+    end
+
+    # Reconstructed total field u = uᵢ + D[y] - ik*S[y] (from the exact
+    # solution), evaluated off-surface with Inti's own single_double_layer:
+    # H-matrix compressed and corrected for near-singular interactions
+    # between the grid and the nearby boundary
+    # ~6 points per wavelength, capped so the number of targets stays sane
+    # (at very high k, e.g. the disk at k≈1257, the plot will still alias)
+    npts = clamp(ceil(Int, 6 * 4 * k / 2π), 200, 800)
+    xx = yy = range(-2, 2; length=npts)
+    grid = [SVector(x1, x2) for x1 in xx, x2 in yy]
+    outside = findall(x -> !Inti.isinside(x, Q), grid)
+    S_viz, D_viz = Inti.single_double_layer(;
+        op=pde, target=grid[outside], source=Q,
+        compression=(method=:hmatrix, tol),
+        correction=(method=:dim, maxdist=5 * meshsize, target_location=:outside),
+    )
+    scattered = D_viz * y_exact - im * k * (S_viz * y_exact)
+    field = fill(NaN, size(grid))
+    field[outside] = real.(uᵢ.(grid[outside]) .+ scattered)
+    p = Plots.heatmap(xx, yy, field'; c=:RdBu, aspect_ratio=:equal, clims=(-2, 2), titlefontsize=10)
+    Plots.xlabel!(p, "x")
+    Plots.ylabel!(p, "y")
+    Plots.title!(p, "Total field Re(u) ($label)")
+    Plots.savefig(p, "$(name)_solution.png")
+
+    # Effective compression ratio used by each heuristic's matvec, per
+    # iteration, vs. the compression already baked into L's own assembly
+    p = Plots.plot(1:it_sigma, InexactGMRES.effective_compression_ratio(L, sigma_heuristic);
+        label="σ(H_m) heuristic", marker=:utriangle, titlefontsize=10)
+    Plots.plot!(p, 1:it_constant_factor, InexactGMRES.effective_compression_ratio(L, constant_factor_heuristic);
+        label="constant bound factor", marker=:rect)
+    Plots.hline!(p, [HMatrices.compression_ratio(L)]; label="static compression_ratio(L)", linestyle=:dash)
+    Plots.xlabel!(p, "Iteration")
+    Plots.ylabel!(p, "Effective compression ratio")
+    Plots.title!(p, "Effective H-matrix compression during matvec ($label)")
+    Plots.savefig(p, "$(name)_compression.png")
+
+    return study
 end
