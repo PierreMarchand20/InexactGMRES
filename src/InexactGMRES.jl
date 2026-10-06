@@ -135,7 +135,7 @@ function igmres(A, b; maxiter=size(A, 2), restart=min(length(b), size(A, 2)), se
                 println("Iteration: ", it, " Current residual: ", res)
             end
 
-            if res < tol #ta zoado esse calculo aqui tb
+            if res/bheta < tol # stop on the relative (not absolute) projection residual
                 y = zero(x)
                 for n = 1:k
                     y += Q[n] * x[n]
@@ -216,7 +216,7 @@ function exact_gmres(A, b; maxiter=size(A, 2), restart=min(length(b), size(A, 2)
                 println("Iteration: ", it, " Current residual: ", res)
             end
 
-            if res < tol #ta zoado esse calculo aqui tb
+            if res/bheta < tol # stop on the relative (not absolute) projection residual
                 y = zero(x)
                 for n = 1:k
                     y += Q[n] * x[n]

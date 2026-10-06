@@ -34,8 +34,8 @@ using LoopVectorization
 
 
 
-    @test norm(A * x_fast - b) < sqrt(eps())
-    @test norm(A_slow * x_slow - b) < sqrt(eps())
+    @test norm(A * x_fast - b) / norm(b) < sqrt(eps())
+    @test norm(A_slow * x_slow - b) / norm(b) < sqrt(eps())
     @test fast_it < slow_it
 
     # exact_gmres should agree with a standard library implementation; each
@@ -44,7 +44,7 @@ using LoopVectorization
     x_exact_gmres, = InexactGMRES.exact_gmres(A, b)
     x_stdlib_gmres = gmres(A, b)
 
-    @test norm(A * x_exact_gmres - b) < sqrt(eps())
+    @test norm(A * x_exact_gmres - b) / norm(b) < sqrt(eps())
     @test norm(x_exact_gmres - x_stdlib_gmres) / norm(x_stdlib_gmres) < 10 * sqrt(eps())
 end;
 
@@ -81,7 +81,7 @@ end;
     # constant precision => equivalent to standard (exact) GMRES
     x_constant_precision, = igmres(H,b; tol, precision_strategy=(res,tol)->tol)
 
-    @test norm(H*x_constant_precision - b) < tol
+    @test norm(H*x_constant_precision - b) / norm(b) < tol
     @test norm(x_constant_precision - x_exact) / norm(x_exact) < tol
 
     # adaptive precision (rel_to_eps), relaxation heuristic from Simoncini &
@@ -89,7 +89,7 @@ end;
     # constant factor of tol, hence the safety margin below
     x_adaptive_precision, = igmres(H,b; tol)
 
-    @test norm(H*x_adaptive_precision - b) < 10 * tol
+    @test norm(H*x_adaptive_precision - b) / norm(b) < 10 * tol
     @test norm(x_adaptive_precision - x_exact) / norm(x_exact) < 10 * tol
 end;
 
