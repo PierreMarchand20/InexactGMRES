@@ -99,9 +99,13 @@ end
 """
     rel_to_eps(res,tol)
 
-Converts the residue from iteration k-1 and overall desired tolerance into and eps we'll use to approximate the original problem's matrix A.
+Matvec tolerance `min(tol/min(res, 1), 1)` from the relative residual
+`res = ‖r̃_{k-1}‖/‖b‖` of iteration k-1 and the relative target `tol`.
 
-Relaxation heuristic from Simoncini & Szyld 2003 (SIAM J. Sci. Comput.).
+Relaxation heuristic from Simoncini & Szyld 2003 (SIAM J. Sci. Comput.):
+bounding ‖r_m - r̃_m‖/‖b‖ ≤ Σ_k ‖E_k‖ (‖r̃_{k-1}‖/‖b‖) / σ_m(H_m) by `tol`
+gives ‖E_k‖ ≤ ℓ tol / (‖r̃_{k-1}‖/‖b‖) with ℓ = σ_m(H_m)/m; this is ℓ = 1
+(the 3-arg method takes ℓ as `bound_factor`).
 """
 function rel_to_eps(res::Float64, tol::Float64)
     return min((tol/min(res, 1)), 1)

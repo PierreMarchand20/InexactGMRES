@@ -14,8 +14,9 @@ include("utils.jl")
 
 `precision_strategy(res, tol)` computes the relative tolerance used for the
 approximate matrix-vector product at each iteration, given the current
-residual `res` and the overall target `tol`. Pass a custom function to use a
-different schedule than the default (see [`rel_to_eps`](@ref)).
+relative residual `res = ‖r̃_{k-1}‖/‖b‖` and the overall relative target
+`tol`. Pass a custom function to use a different schedule than the default
+(see [`rel_to_eps`](@ref)).
 
 When `track_true_residual=true`, also return, as 4th and 5th return values:
 - `true_residuals`: `norm(A*x_k - b)/norm(b)` at each iteration (an exact
@@ -75,7 +76,7 @@ function igmres(A, b; maxiter=size(A, 2), restart=min(length(b), size(A, 2)), se
 
 
             ###Transformation of current residue and overall tolerance in the new error we'll use
-            current_perror = precision_strategy(res, tol)
+            current_perror = precision_strategy(res / bheta, tol)
             A_iterable isa HMatrices.ITerm && (A_iterable.rtol = current_perror)
             track_bound && push!(eta_history, current_perror)
             ###Arnold's iteration inside GMRES to use Q,H from past iterations
