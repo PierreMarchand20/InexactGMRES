@@ -23,7 +23,7 @@ for a plane wave incident at angle `θ`. Returns a NamedTuple `(; L, g, pde,
 uᵢ)` -- `pde` and `uᵢ` (the incident wave) are included since callers doing
 field reconstruction (not just solving) need them too.
 """
-function assemble_cfie(Q, k; ε=1e-8, θ=π / 4)
+function assemble_cfie(Q, k; ε=1e-8, θ=π / 4, correction=true)
     pde = Inti.Helmholtz(; k, dim=2)
     SL = Inti.SingleLayerKernel(pde)
     DL = Inti.DoubleLayerKernel(pde)
@@ -37,7 +37,43 @@ function assemble_cfie(Q, k; ε=1e-8, θ=π / 4)
     L = Inti.assemble_hmatrix(Lop; rtol=ε)
     Id = sparse((0.5 + 0im) * I, size(L))
     axpy!(1.0, Id, L)
+    correction && axpy!(1.0, singular_correction(DL, SL, k, Q), L)
     return (; L, g, pde, uᵢ)
+end
+
+"""
+    assemble_cfie_direct(Q, k; ε=1e-8, θ=π/4)
+
+Direct Dirichlet CFIE `(I/2 + D' - ik*S) ∂ₙu = ∂ₙuᵢ - ik*uᵢ`, the transpose of
+[`assemble_cfie`](@ref)'s operator, whose unknown is the normal trace `∂ₙu` of
+the total field. Same return values.
+"""
+function assemble_cfie_direct(Q, k; ε=1e-8, θ=π / 4, correction=true)
+    pde = Inti.Helmholtz(; k, dim=2)
+    SL = Inti.SingleLayerKernel(pde)
+    ADL = Inti.AdjointDoubleLayerKernel(pde)
+    K = let SL = SL, ADL = ADL, k = k
+        (t, q) -> ADL(t, q) - im * k * SL(t, q)
+    end
+    d = SVector(cos(θ), sin(θ))
+    uᵢ = (x) -> exp(im * k * dot(x, d))
+    g = map(q -> (im * k * dot(d, q.normal) - im * k) * uᵢ(q.coords), Q)
+    L = Inti.assemble_hmatrix(Inti.IntegralOperator(K, Q, Q); rtol=ε)
+    axpy!(1.0, sparse((0.5 + 0im) * I, size(L)), L)
+    correction && axpy!(1.0, singular_correction(ADL, SL, k, Q), L)
+    return (; L, g, pde, uᵢ)
+end
+
+"""
+    singular_correction(DL, SL, k, Q)
+
+Sparse correction of the singular and nearly singular entries of `DL - ik*SL`
+on `Q` (`Inti.adaptive_correction`). Without it, the Nyström matrix just
+drops the diagonal, an O(1) error at high k because of the `-ik*SL` term.
+"""
+function singular_correction(DL, SL, k, Q)
+    return Inti.adaptive_correction(Inti.IntegralOperator(DL, Q, Q)) -
+           im * k * Inti.adaptive_correction(Inti.IntegralOperator(SL, Q, Q))
 end
 
 """
@@ -47,14 +83,14 @@ Dirichlet CFIE problem on the unit circle, meshed at `meshsize =
 2π/(npplo*k)` points-per-wavelength. Returns `(; L, g, pde, uᵢ, Q,
 meshsize)`.
 """
-function disk_problem(k; npplo=10, qorder=4, ε=1e-8, θ=π / 4)
+function disk_problem(k; npplo=10, qorder=4, ε=1e-8, θ=π / 4, correction=true)
     meshsize = 2π / (npplo * k)
     circle = Inti.parametric_curve(0.0, 1.0; labels=["circle"]) do s
         return SVector(cos(2π * s[1]), sin(2π * s[1]))
     end
     msh = Inti.meshgen(circle; meshsize)
     Q = Inti.Quadrature(msh; qorder)
-    return (; assemble_cfie(Q, k; ε, θ)..., Q, meshsize)
+    return (; assemble_cfie(Q, k; ε, θ, correction)..., Q, meshsize)
 end
 
 """
@@ -64,10 +100,11 @@ Loads `data/\$geo.geo` (a half-elliptical-shell cavity, parametrized by the
 Gmsh DefineConstant's `npplo`/`k`) at the given wavenumber `k`, assembles the
 Dirichlet CFIE H-matrix and RHS. `geo` can be swapped for
 `"elliptic_cavity_bigger_2D"` to use the more closed variant (shell cut at
-x = cos(9π/10) instead of cos(7π/10), so a narrower mouth). Returns `(; L,
-g, pde, uᵢ, Q, meshsize)`.
+x = cos(9π/10) instead of cos(7π/10), so a narrower mouth). `direct=true`
+assembles [`assemble_cfie_direct`](@ref) instead. Returns `(; L, g, pde, uᵢ,
+Q, meshsize)`.
 """
-function cavity_problem(k; geo="elliptic_cavity_2D", npplo=10, qorder=4, gorder=2, ε=1e-8, θ=π / 4)
+function cavity_problem(k; geo="elliptic_cavity_2D", npplo=10, qorder=4, gorder=2, ε=1e-8, θ=π / 4, direct=false, correction=true)
     meshsize = 2π / (npplo * k)
     filename = joinpath(pkgdir(InexactGMRES), "data", "$geo.geo")
     gmsh.initialize()
@@ -83,32 +120,216 @@ function cavity_problem(k; geo="elliptic_cavity_2D", npplo=10, qorder=4, gorder=
     Γ = Inti.boundary(Ω)
     Γ_msh = view(msh, Γ)
     Q = Inti.Quadrature(Γ_msh; qorder)
-    return (; assemble_cfie(Q, k; ε, θ)..., Q, meshsize)
+    return (; (direct ? assemble_cfie_direct : assemble_cfie)(Q, k; ε, θ, correction)..., Q, meshsize)
+end
+
+## Quasimodes of the elliptic cavity: Dirichlet eigenmodes of the inner ellipse
+## x²/a² + y²/b² < 1 (a=1, b=0.5 in data/elliptic_cavity*_2D.geo), in elliptic
+## coordinates x = c cosh ξ cos θ, y = c sinh ξ sin θ, c = √(a²-b²):
+## u = R(ξ)Θ(θ), Θ'' + (α - 2q cos 2θ)Θ = 0, R'' - (α - 2q cosh 2ξ)R = 0, q = (kc/2)².
+
+"""
+    mathieu_angular(m, q, kind)
+
+Characteristic value `α` and angular function `Θ` of `ce_m` (`kind=:even`) or
+`se_m` (`kind=:odd`), from the symmetric tridiagonal eigenproblem on their
+Fourier coefficients.
+"""
+function mathieu_angular(m, q, kind; vectors=true)
+    N = ceil(Int, 2sqrt(q)) + 40
+    if kind == :even && iseven(m)
+        n = 2 .* (0:N-1); trig = cos; j = m ÷ 2
+    elseif kind == :even
+        n = 2 .* (0:N-1) .+ 1; trig = cos; j = (m - 1) ÷ 2
+    elseif isodd(m)
+        n = 2 .* (0:N-1) .+ 1; trig = sin; j = (m - 1) ÷ 2
+    else
+        n = 2 .* (0:N-1) .+ 2; trig = sin; j = m ÷ 2 - 1
+    end
+    M = SymTridiagonal(Float64.(n .^ 2), fill(Float64(q), N - 1))
+    kind == :even && iseven(m) && (M.ev[1] *= sqrt(2))
+    n[1] == 1 && (M.dv[1] += kind == :even ? q : -q)
+    vectors || return eigvals(M, j+1:j+1)[1], nothing # α only, O(N)
+    F = eigen(M)
+    coef = F.vectors[:, j+1]
+    kind == :even && iseven(m) && (coef[1] /= sqrt(2))
+    return F.values[j+1], θ -> sum(coef[i] * trig(n[i] * θ) for i in 1:N)
 end
 
 """
-    tol_sweep(builder, k, tols)
+    mathieu_radial(α, q, ξ0, kind; steps=20_000)
+
+`(R(ξ0), R'(ξ0))` for the radial Mathieu function regular on the focal
+segment (`R'(0) = 0` for `ce`, `R(0) = 0` for `se`), integrated with RK4.
+"""
+function mathieu_radial(α, q, ξ0, kind; steps=20_000)
+    f(ξ, u) = SVector(u[2], (α - 2q * cosh(2ξ)) * u[1])
+    u = kind == :even ? SVector(1.0, 0.0) : SVector(0.0, 1.0)
+    h = ξ0 / steps
+    for i in 0:steps-1
+        ξ = i * h
+        k1 = f(ξ, u); k2 = f(ξ + h / 2, u + h / 2 * k1)
+        k3 = f(ξ + h / 2, u + h / 2 * k2); k4 = f(ξ + h, u + h * k3)
+        u += h / 6 * (k1 + 2k2 + 2k3 + k4)
+    end
+    return u[1], u[2]
+end
+
+"""
+    ellipse_dirichlet_frequencies(m, kind, kmin, kmax; a=1.0, b=0.5, dk=0.01)
+
+Wavenumbers in `[kmin, kmax]` of the Dirichlet eigenmodes `R(ξ)ce_m(θ)`
+(`kind=:even`) or `R(ξ)se_m(θ)` (`kind=:odd`) of the ellipse.
+"""
+function ellipse_dirichlet_frequencies(m, kind, kmin, kmax; a=1.0, b=0.5, dk=0.01)
+    c = sqrt(a^2 - b^2); ξ0 = acosh(a / c)
+    R(k) = (q = (k * c / 2)^2; mathieu_radial(first(mathieu_angular(m, q, kind; vectors=false)), q, ξ0, kind)[1])
+    ks = Float64[]
+    k0, R0 = kmin, R(kmin)
+    for k1 in kmin+dk:dk:kmax
+        R1 = R(k1)
+        if sign(R1) != sign(R0)
+            lo, hi, Rlo = k0, k1, R0
+            for _ in 1:50
+                mid = (lo + hi) / 2; Rm = R(mid)
+                sign(Rm) == sign(Rlo) ? (lo = mid; Rlo = Rm) : (hi = mid)
+            end
+            push!(ks, (lo + hi) / 2)
+        end
+        k0, R0 = k1, R1
+    end
+    return ks
+end
+
+"""
+    quasimode_density(Q, kq, m, kind; a=1.0, b=0.5, tol=1e-2)
+
+Normal trace `∂ₙu` (along `Q`'s normals) of the eigenmode at wavenumber `kq`,
+on the quadrature nodes of the inner wall, extended by zero elsewhere: an
+approximate null vector of the direct CFIE near `kq`.
+"""
+function quasimode_density(Q, kq, m, kind; a=1.0, b=0.5, tol=1e-2)
+    c = sqrt(a^2 - b^2); ξ0 = acosh(a / c); q = (kq * c / 2)^2
+    α, Θ = mathieu_angular(m, q, kind)
+    _, dR = mathieu_radial(α, q, ξ0, kind)
+    return map(Q) do node
+        x, y = node.coords
+        abs(x^2 / a^2 + y^2 / b^2 - 1) > tol && return zero(ComplexF64)
+        θ = atan(y / (c * sinh(ξ0)), x / (c * cosh(ξ0)))
+        ∂ξX = SVector(c * sinh(ξ0) * cos(θ), c * cosh(ξ0) * sin(θ))
+        return complex(dR * Θ(θ) * dot(node.normal, ∂ξX) / dot(∂ξX, ∂ξX))
+    end
+end
+
+"""
+    mouth_share(m, kind, kq; θ_mouth, a=1.0, b=0.5)
+
+Share of `|Θ|²` of the angular Mathieu function (`ce_m` or `se_m` at the
+wavenumber `kq`) on the mouth arc `|θ| > θ_mouth` of the inner ellipse: a
+free indicator of how much the quasimode leaks through the opening.
+"""
+function mouth_share(m, kind, kq; θ_mouth, a=1.0, b=0.5)
+    c = sqrt(a^2 - b^2)
+    _, Θ = mathieu_angular(m, (kq * c / 2)^2, kind)
+    θs = range(-π, π; length=4001)[1:end-1]
+    w = abs2.(Θ.(θs))
+    return sum(w[abs.(θs) .> θ_mouth]) / sum(w)
+end
+
+"""
+    select_quasimodes(Q, k; θ_mouth, δ=1.0, ε=1e-3, a=1.0, b=0.5)
+
+Deflation space for the direct CFIE at `k`: the normal traces of the Mathieu
+quasimodes with `|k - k_q| < δ` and a share below `ε` of `|Θ|²` on the mouth
+arc `|θ| > θ_mouth` (`7π/10` for the cavity, `9π/10` for the bigger one).
+Returns a matrix, or `nothing` when no mode qualifies.
+"""
+function select_quasimodes(Q, k; θ_mouth, δ=1.0, ε=1e-3, a=1.0, b=0.5)
+    mmax = ceil(Int, k * sqrt(a^2 - b^2)) # angular orders beyond k·c are evanescent near the minor axis
+    cols = Vector{ComplexF64}[]
+    for kind in (:even, :odd), m in (kind == :even ? (0:mmax) : (1:mmax))
+        mouth_share(m, kind, k; θ_mouth, a, b) > 10ε && continue # leaky at k already: skip the scan
+        for kq in ellipse_dirichlet_frequencies(m, kind, k - δ, k + δ; a, b)
+            mouth_share(m, kind, kq; θ_mouth, a, b) < ε && push!(cols, quasimode_density(Q, kq, m, kind; a, b))
+        end
+    end
+    return isempty(cols) ? nothing : reduce(hcat, cols)
+end
+
+# (I - CCᴴ)A, the operator of a Krylov space deflated by C = A*U (orthonormal)
+struct Projected{T,M} <: AbstractMatrix{T}
+    A::M
+    C::Matrix{T}
+end
+Base.size(P::Projected) = size(P.A)
+function LinearAlgebra.mul!(y::AbstractVector, P::Projected, x::AbstractVector, α::Number, β::Number)
+    w = InexactGMRES.accurate_mul(P.A, x)
+    y .= w .- P.C * (P.C' * w)
+    return y
+end
+
+"""
+    deflated_exact_gmres(L, g, U; tol)
+
+Exact GMRES deflated by `span(U)`: `C = L*U` (orthonormalized), then GMRES on
+`(I - CCᴴ)L` with right-hand side `(I - CCᴴ)g`, which has the same residuals
+as `igmres(...; deflation=U)` with exact products. Returns
+`(iterations, H_m)`; `U === nothing` falls back to `exact_gmres`.
+"""
+function deflated_exact_gmres(L, g, U; tol)
+    U === nothing && return InexactGMRES.exact_gmres(L, g; tol, return_H=true)[3:4]
+    C = Matrix(qr(reduce(hcat, [InexactGMRES.accurate_mul(L, u) for u in eachcol(U)])).Q)
+    Pg = g - C * (C' * g)
+    return InexactGMRES.exact_gmres(Projected(L, C), Pg; tol=tol * norm(g) / norm(Pg), return_H=true)[3:4]
+end
+
+"""
+    tol_sweep(builder, k, tols; deflation=nothing)
 
 Build one problem (fixed geometry/frequency, via `builder(k)`) and benchmark
 `igmres` vs `exact_gmres` at each tolerance in `tols`. Returns a DataFrame
-with columns `tol`, `speedup`, `rel_error`, `igmres_it`, `exact_it`.
+with columns `tol`, `speedup`, `rel_error`, `igmres_it`, `exact_it`,
+`igmres_restarts` (restarts after a failed true-residual check).
+
+`deflation(prob, k)`, when given, returns a deflation space (or `nothing`).
+Both solvers are then deflated by it, and their timings include building
+`C = L*U`.
 """
-function tol_sweep(builder, k, tols)
+function tol_sweep(builder, k, tols; deflation=nothing)
+    deflation === nothing || return deflated_tol_sweep(builder, k, tols, deflation)
     (; L, g) = builder(k)
     rows = map(tols) do tol
         bench_igmres = @benchmark igmres($L, $g; tol=$tol)
         bench_exact = @benchmark InexactGMRES.exact_gmres($L, $g; tol=$tol)
-        y, _, it = igmres(L, g; tol)
+        restarts = Int[]
+        y, _, it = igmres(L, g; tol, correction_log=restarts)
         _, _, exact_it = InexactGMRES.exact_gmres(L, g; tol)
         rel_error = norm(L * y - g) / norm(g)
         speedup = minimum(bench_exact).time / minimum(bench_igmres).time
-        (; tol, speedup, rel_error, igmres_it=it, exact_it)
+        (; tol, speedup, rel_error, igmres_it=it, exact_it, igmres_restarts=length(restarts))
+    end
+    return DataFrame(rows)
+end
+
+function deflated_tol_sweep(builder, k, tols, deflation)
+    prob = builder(k)
+    (; L, g) = prob
+    U = deflation(prob, k)
+    rows = map(tols) do tol
+        bench_igmres = @benchmark igmres($L, $g; tol=$tol, deflation=$U)
+        bench_exact = @benchmark deflated_exact_gmres($L, $g, $U; tol=$tol)
+        restarts = Int[]
+        y, _, it = igmres(L, g; tol, deflation=U, correction_log=restarts)
+        exact_it, _ = deflated_exact_gmres(L, g, U; tol)
+        rel_error = norm(L * y - g) / norm(g)
+        speedup = minimum(bench_exact).time / minimum(bench_igmres).time
+        (; tol, speedup, rel_error, igmres_it=it, exact_it, igmres_restarts=length(restarts), p=U === nothing ? 0 : size(U, 2))
     end
     return DataFrame(rows)
 end
 
 """
-    frequency_sweep(builder, ks; tol, bound_factor=1.0)
+    frequency_sweep(builder, ks; tol, bound_factor=1.0, deflation=nothing)
 
 For each `k` in `ks`, build a fresh problem via `builder(k)` and run
 `exact_gmres` once plus `igmres` twice -- same two heuristics as
@@ -134,9 +355,20 @@ between the true and the projection residual.
 Returns a DataFrame with columns `k`, `exact_it`, `igmres_it_sigma`,
 `igmres_it_constant_factor`, `sigma_m`, `speedup_sigma`,
 `speedup_constant_factor`, `true_res_sigma`, `true_res_constant_factor`,
-`gap_sigma`, `gap_constant_factor`, `size`.
+`gap_sigma`, `gap_constant_factor`, `restarts_sigma`,
+`restarts_constant_factor` (restarts after a failed true-residual check), `size`, `p`,
+the solve times `exact_time`, `time_sigma`, `time_constant_factor`, the
+H-matrix compression ratio of an accurate product (`compression`) and of
+products at `η = 1e-2` and `η = 1` (`compression_1e2`, `compression_1`),
+and the work of each relaxed solve relative to the exact one
+(`work_ratio_sigma`, `work_ratio_constant_factor`, see [`relaxed_work`](@ref)).
+
+`deflation(prob, k)`, when given, returns a deflation space at each `k` (or
+`nothing`; `p` is its dimension). All solves are then deflated by it, the
+exact one through [`deflated_exact_gmres`](@ref), whose `H_m` gives
+`sigma_m`; the timings include building `C = L*U`.
 """
-function frequency_sweep(builder, ks; tol, bound_factor=1.0)
+function frequency_sweep(builder, ks; tol, bound_factor=1.0, deflation=nothing)
     (; L, g) = builder(first(ks))
     InexactGMRES.exact_gmres(L, g; tol)
     # warm up both heuristics' distinct closure types, not just the default
@@ -146,20 +378,28 @@ function frequency_sweep(builder, ks; tol, bound_factor=1.0)
     igmres(L, g; tol, precision_strategy=(res, t) -> InexactGMRES.rel_to_eps(bound_factor, res, t))
 
     rows = map(ks) do k
-        (; L, g) = builder(k)
-        exact_time = @elapsed ((_, _, exact_it, Hmat) = InexactGMRES.exact_gmres(L, g; tol, return_H=true))
+        prob = builder(k)
+        (; L, g) = prob
+        U = deflation === nothing ? nothing : deflation(prob, k)
+        exact_time = @elapsed ((exact_it, Hmat) = deflated_exact_gmres(L, g, U; tol))
         sigma_m = svd(Hmat).S[end]
 
         sigma_strategy = (res, t) -> InexactGMRES.rel_to_eps(sigma_m / exact_it, res, t)
         constant_strategy = (res, t) -> InexactGMRES.rel_to_eps(bound_factor, res, t)
 
-        sigma_time = @elapsed ((_, _, igmres_it_sigma) = igmres(L, g; tol, precision_strategy=sigma_strategy))
-        constant_time = @elapsed ((_, _, igmres_it_constant_factor) = igmres(L, g; tol, precision_strategy=constant_strategy))
+        restarts_sigma, restarts_constant = Int[], Int[] # iterations of the restarts after a failed true-residual check
+        eta_sigma, eta_constant = Float64[], Float64[]   # matvec tolerances actually used
+        sigma_time = @elapsed ((_, _, igmres_it_sigma) = igmres(L, g; tol, precision_strategy=sigma_strategy, deflation=U,
+            correction_log=restarts_sigma, eta_log=eta_sigma))
+        constant_time = @elapsed ((_, _, igmres_it_constant_factor) = igmres(L, g; tol, precision_strategy=constant_strategy, deflation=U,
+            correction_log=restarts_constant, eta_log=eta_constant))
+        p = U === nothing ? 0 : size(U, 2)
+        compression = InexactGMRES.effective_compression_ratio(L, 0.0)
 
         # separate untimed runs: track_true_residual adds an exact matvec per
         # iteration, which would distort the speedups above
-        (_, _, _, true_res_sigma, gap_sigma) = igmres(L, g; tol, precision_strategy=sigma_strategy, track_true_residual=true)
-        (_, _, _, true_res_constant_factor, gap_constant_factor) = igmres(L, g; tol, precision_strategy=constant_strategy, track_true_residual=true)
+        (_, _, _, true_res_sigma, gap_sigma) = igmres(L, g; tol, precision_strategy=sigma_strategy, track_true_residual=true, deflation=U)
+        (_, _, _, true_res_constant_factor, gap_constant_factor) = igmres(L, g; tol, precision_strategy=constant_strategy, track_true_residual=true, deflation=U)
 
         gnorm = norm(g)
         (; k, exact_it, igmres_it_sigma, igmres_it_constant_factor, sigma_m,
@@ -169,9 +409,59 @@ function frequency_sweep(builder, ks; tol, bound_factor=1.0)
             true_res_constant_factor=true_res_constant_factor[end],
             gap_sigma=gap_sigma[end] / gnorm,
             gap_constant_factor=gap_constant_factor[end] / gnorm,
-            size=length(g))
+            restarts_sigma=length(restarts_sigma), restarts_constant_factor=length(restarts_constant),
+            size=length(g), p, exact_time, time_sigma=sigma_time, time_constant_factor=constant_time,
+            compression, compression_1e2=InexactGMRES.effective_compression_ratio(L, 1e-2),
+            compression_1=InexactGMRES.effective_compression_ratio(L, 1.0),
+            work_ratio_sigma=relaxed_work(L, eta_sigma, length(restarts_sigma), p) / (exact_it + p),
+            work_ratio_constant_factor=relaxed_work(L, eta_constant, length(restarts_constant), p) / (exact_it + p))
     end
     return DataFrame(rows)
+end
+
+"""
+    relaxed_work(L, etas, restarts, p; recycle=10)
+
+Work of a relaxed `igmres` solve in units of one accurate product: each
+product at tolerance `η` in `etas` counts for the share of the H-matrix
+entries it uses ([`effective_compression_ratio`](@ref)), plus the accurate
+products: the true-residual checks (`restarts + 1`), the recycling after each
+restart (`recycle` each) and the deflation space (`p`).
+"""
+function relaxed_work(L, etas, restarts, p; recycle=10)
+    full = InexactGMRES.effective_compression_ratio(L, 0.0)
+    relaxed = sum(η -> full / InexactGMRES.effective_compression_ratio(L, η), etas; init=0.0)
+    return relaxed + (restarts + 1) + recycle * restarts + p
+end
+
+"""
+    plot_frequency_extras(df, stem, name, suffix, op_label, resonances; tol)
+
+Figures added to every frequency sweep: H-matrix compression ratios, work of
+the relaxed solves relative to the exact one, and restarts, against `k`.
+Saved as `frequency_sweep_\$(stem)_{compression,work,restarts}\$suffix.png`.
+"""
+function plot_frequency_extras(df, stem, name, suffix, op_label, resonances; tol)
+    vl(p) = vline!(p, resonances; label="bouncing-ball modes", linestyle=:dot, color=:gray, alpha=0.4)
+    p5 = plot(df.k, df.compression; label="accurate product", marker=:circle, yaxis=:log)
+    plot!(p5, df.k, df.compression_1e2; label="product at η = 1e-2", marker=:circle, linestyle=:dash)
+    plot!(p5, df.k, df.compression_1; label="product at η = 1", marker=:circle, linestyle=:dot)
+    vl(p5); xlabel!(p5, "k"); ylabel!(p5, "Compression ratio (dense / H-matrix entries used)")
+    title!(p5, "H-matrix compression vs frequency, $name (tol=$tol$op_label)")
+    savefig(p5, "frequency_sweep_$(stem)_compression$suffix.png")
+
+    p6 = plot(df.k, df.work_ratio_sigma; label="σ(H_m) heuristic", marker=:circle)
+    plot!(p6, df.k, df.work_ratio_constant_factor; label="constant bound factor", marker=:circle, linestyle=:dash)
+    hline!(p6, [1.0]; label="exact GMRES", color=:black)
+    vl(p6); xlabel!(p6, "k"); ylabel!(p6, "Work / work of exact GMRES")
+    title!(p6, "Work of the relaxed solves vs frequency, $name (tol=$tol$op_label)")
+    savefig(p6, "frequency_sweep_$(stem)_work$suffix.png")
+
+    p7 = plot(df.k, df.restarts_sigma; label="σ(H_m) heuristic", marker=:circle)
+    plot!(p7, df.k, df.restarts_constant_factor; label="constant bound factor", marker=:circle, linestyle=:dash)
+    vl(p7); xlabel!(p7, "k"); ylabel!(p7, "Restarts (failed true-residual checks)")
+    title!(p7, "Restarts vs frequency, $name (tol=$tol$op_label)")
+    savefig(p7, "frequency_sweep_$(stem)_restarts$suffix.png")
 end
 
 """
@@ -215,7 +505,7 @@ function precision_strategy_comparison(prob, k, tol; name, label, bound_factor=1
             true_residuals_constant_factor, residual_gap_constant_factor, bound_right4_constant_factor,
             constant_factor_heuristic, it_constant_factor),
     )
-        p = Plots.plot(1:it, residuals; label="igmres residual (internal)", yaxis=:log, marker=:diamond, titlefontsize=10)
+        p = Plots.plot(1:it, residuals; label="igmres residual (internal)", yaxis=:log, marker=:diamond)
         Plots.plot!(p, 1:it, true_residuals; label="true residual", marker=:circle)
         Plots.plot!(p, 1:it, heuristic; label="heuristic value (matvec rtol)", marker=:utriangle, linestyle=:dash)
         Plots.plot!(p, 1:it, gap ./ gnorm; label="||true - internal||", marker=:star5, linestyle=:dot)
@@ -245,7 +535,7 @@ function precision_strategy_comparison(prob, k, tol; name, label, bound_factor=1
     scattered = D_viz * y_exact - im * k * (S_viz * y_exact)
     field = fill(NaN, size(grid))
     field[outside] = real.(uᵢ.(grid[outside]) .+ scattered)
-    p = Plots.heatmap(xx, yy, field'; c=:RdBu, aspect_ratio=:equal, clims=(-2, 2), titlefontsize=10)
+    p = Plots.heatmap(xx, yy, field'; c=:RdBu, aspect_ratio=:equal, clims=(-2, 2))
     Plots.xlabel!(p, "x")
     Plots.ylabel!(p, "y")
     Plots.title!(p, "Total field Re(u) ($label)")
@@ -254,7 +544,7 @@ function precision_strategy_comparison(prob, k, tol; name, label, bound_factor=1
     # Effective compression ratio used by each heuristic's matvec, per
     # iteration, vs. the compression already baked into L's own assembly
     p = Plots.plot(1:it_sigma, InexactGMRES.effective_compression_ratio(L, sigma_heuristic);
-        label="σ(H_m) heuristic", marker=:utriangle, titlefontsize=10)
+        label="σ(H_m) heuristic", marker=:utriangle)
     Plots.plot!(p, 1:it_constant_factor, InexactGMRES.effective_compression_ratio(L, constant_factor_heuristic);
         label="constant bound factor", marker=:rect)
     Plots.hline!(p, [HMatrices.compression_ratio(L)]; label="static compression_ratio(L)", linestyle=:dash)

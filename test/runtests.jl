@@ -36,6 +36,13 @@ using HMatrices
     @test norm(A_slow * x_slow - b) / norm(b) < sqrt(eps())
     @test fast_it < slow_it
 
+    # restarted, with and without recycling harmonic Ritz vectors (GCRO-DR)
+    x_plain, _, plain_it = igmres(A_slow, b; restart=20, recycle=0, maxiter=2000)
+    x_recycled, _, recycled_it = igmres(A_slow, b; restart=20, recycle=10, maxiter=2000)
+    @test norm(A_slow * x_plain - b) / norm(b) < sqrt(eps())
+    @test norm(A_slow * x_recycled - b) / norm(b) < sqrt(eps())
+    @test recycled_it < plain_it
+
     # exact_gmres should agree with a standard library implementation; each
     # converges to its own ~sqrt(eps()) tolerance independently, so their
     # gap needs a safety margin rather than the bare tolerance itself

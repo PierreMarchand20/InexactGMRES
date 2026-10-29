@@ -48,9 +48,16 @@ function my_arnoldi!(Q, H, A::HMatrices.ITerm, current_it)
     lmul!(1/H[current_it][current_it+1], Q[current_it+1])
 end
 
+# Accurate product. HMatrix products default to HMatrices' threaded code path,
+# which is ~20% slower even on one thread: use the same serial path as ITerm.
+accurate_mul(A, x) = A * x
+function accurate_mul(A::HMatrices.HMatrix, x)
+    y = similar(x, promote_type(eltype(A), eltype(x)), size(A, 1))
+    return mul!(y, A, x, 1, 0; threads=false)
+end
+
 function my_arnoldi!(Q, H, A::AbstractMatrix, current_it)
-    dummy_v = similar(Q[current_it])
-    mul!(dummy_v, A, Q[current_it], 1, 0)
+    dummy_v = accurate_mul(A, Q[current_it])
     push!(Q, dummy_v) # heavy part should be here
     push!(H, zeros(current_it+1))
     for j = 1:current_it
@@ -169,8 +176,8 @@ end
 
 Like `HMatrices.compression_ratio(H)`, but counting only the rank-1 terms
 `HMatrices.ITerm`'s inexact matvec would actually use at the given `rtol`
-for each admissible (low-rank) leaf -- `findfirst(x -> x <= rtol,
-R.rel_er)`, the same truncation `ITerm`'s own `mul!` applies -- instead of
+for each admissible (low-rank) leaf -- up to the term after the last one
+with `R.rel_er > rtol`, the same truncation `ITerm`'s own `mul!` applies -- instead of
 each leaf's full stored rank. Full (non-admissible) leaves always cost
 their dense size, same as the exact product. A value higher than
 `HMatrices.compression_ratio(H)` means the inexact product at this `rtol`
@@ -190,8 +197,8 @@ function effective_compression_ratio(H::HMatrices.HMatrix, rtol::Float64)
         m, n = size(leaf)
         if HMatrices.isadmissible(leaf)
             R = HMatrices.data(leaf)
-            k = findfirst(x -> x <= rtol, R.rel_er)
-            k = isnothing(k) ? size(R.A, 2) : k
+            k = findlast(x -> x > rtol, R.rel_er)
+            k = min(isnothing(k) ? 1 : k + 1, size(R.A, 2))
             used += k * (m + n)
         else
             used += m * n
@@ -204,3 +211,36 @@ function effective_compression_ratio(H::HMatrices.HMatrix, rtols::AbstractVector
     return effective_compression_ratio.(Ref(H), rtols)
 end
 
+"""
+    gcro_solution(x0, Q, y, U, B, k)
+
+Iterate `x0 + V_k y - U B y` of a GCRO cycle: with `C = A U`, `B = Cᴴ A V_k` and
+`r0 ⊥ C`, choosing `-B y` as the coefficients on `U` cancels the `C` part of
+the residual, so `y` is the usual GMRES least squares solution on `H̄_k`.
+"""
+function gcro_solution(x0, Q, y, U, B, k)
+    k == 0 && return x0
+    return x0 + sum(Q[n] * y[n] for n in 1:k) - U * sum(B[n] * y[n] for n in 1:k)
+end
+
+"""
+    harmonic_ritz_vectors(U, C, Q, H_raw, B, k, p)
+
+The `p` harmonic Ritz vectors of `A` with the smallest harmonic Ritz values
+in `span([U V_k])`, using `A [U V_k] = [C V_{k+1}] G` with
+`G = [I B; 0 H̄_k]` (GCRO-DR, Parks et al. 2006): `Gᴴ G z = θ Gᴴ [C V_{k+1}]ᴴ [U V_k] z`.
+"""
+function harmonic_ritz_vectors(U, C, Q, H_raw, B, k, p)
+    T = eltype(U)
+    q = size(U, 2)
+    Hbar = zeros(T, k + 1, k)
+    for j in 1:k
+        Hbar[1:(j+1), j] = H_raw[j]
+    end
+    G = [Matrix{T}(I, q, q) reduce(hcat, B[1:k]); zeros(T, k + 1, q) Hbar]
+    W = hcat(U, Q[1:k]...)
+    Wp = hcat(C, Q[1:(k+1)]...)
+    θ, Z = eigen(G' * G, G' * (Wp' * W))
+    idx = sortperm(abs.(θ))[1:min(p, q + k)]
+    return W * Z[:, idx]
+end

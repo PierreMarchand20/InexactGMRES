@@ -2,7 +2,7 @@
 
 julia_version = "1.13.0"
 manifest_format = "2.1"
-project_hash = "6ed611b653274e0dc19f4b9db54c76385ac58131"
+project_hash = "6d22b1289e7944c5bfac9f4f0626da405dca2e90"
 
 [[deps.AbstractTrees]]
 git-tree-sha1 = "2d9c9a55f9c93e8887ad391fbae72f8ef55e1177"
@@ -457,9 +457,9 @@ version = "2.1.2+0"
 
 [[deps.HMatrices]]
 deps = ["Distributed", "LinearAlgebra", "Printf", "RecipesBase", "SparseArrays", "StaticArrays", "Statistics"]
-git-tree-sha1 = "38608db7c15e163a0df3ddc3cb14e703a5d2de7c"
+git-tree-sha1 = "9c61e20f5f076c1297e479d9b6a754b9b31cdb55"
 repo-rev = "inexact-hmatrix"
-repo-url = "https://github.com/IntegralEquations/HMatrices.jl"
+repo-url = "https://github.com/PierreMarchand20/HMatrices.jl"
 uuid = "8646bddf-ab1c-4fa7-9c51-ba187d647618"
 version = "0.2.8"
 

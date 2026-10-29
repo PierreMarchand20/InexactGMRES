@@ -3,6 +3,24 @@ using Plots
 using CSV
 
 include(joinpath(pkgdir(InexactGMRES), "src", "experiment_utils.jl"))
+default(size=(800, 500), titlefontsize=9)
+
+## `--corrected`: singular-corrected operator, outputs suffixed `_corrected`.
+## Without it: the uncorrected operator, as in the first runs.
+## `--replot`: rebuild the figures from the CSV of a previous run, without solving.
+## `--npplo=N`: points per wavelength (default 10), part of the output names.
+i = findfirst(startswith("--npplo="), ARGS)
+npplo = i === nothing ? 10 : parse(Int, split(ARGS[i], "=")[2])
+correction = "--corrected" in ARGS
+## `--direct`: direct CFIE (unknown ∂ₙu). `--deflated`: deflate with the Mathieu
+## quasimodes selected at each k (needs `--direct`, whose null vectors they approximate).
+direct = "--direct" in ARGS
+deflated = "--deflated" in ARGS
+deflated && !direct && error("--deflated needs --direct")
+suffix = "_npplo$npplo" * (correction ? "_corrected" : "") * (direct ? "_direct" : "") * (deflated ? "_deflated" : "")
+op_label = ", npplo=$npplo" * join([", corrected operator", ", direct", ", deflated"][[correction, direct, deflated]])
+θ_mouth = 7π / 10 # mouth arc |θ| > θ_mouth of the inner ellipse
+deflation = deflated ? ((prob, k) -> select_quasimodes(prob.Q, k; θ_mouth)) : nothing
 
 ## Fixed geometry and frequency, sweep the overall igmres/exact_gmres
 ## tolerance for the cavity.
@@ -11,25 +29,26 @@ include(joinpath(pkgdir(InexactGMRES), "src", "experiment_utils.jl"))
 k = 100.0
 tols = [1e-2, 1e-4, 1e-6, 1e-8]
 
-df = tol_sweep(cavity_problem, k, tols)
-CSV.write("tol_sweep_cavity.csv", df)
+replot = "--replot" in ARGS
+df = replot ? CSV.read("tol_sweep_cavity$suffix.csv", DataFrame) : tol_sweep(k -> cavity_problem(k; npplo, correction, direct), k, tols; deflation)
+replot || CSV.write("tol_sweep_cavity$suffix.csv", df)
 
 p1 = plot(df.tol, df.speedup; label="cavity", marker=:circle, xaxis=:log)
 xlabel!(p1, "Overall tolerance")
 ylabel!(p1, "Speed-up (exact_gmres / igmres)")
-title!(p1, "igmres speed-up at k=$k (cavity)")
-savefig(p1, "tol_sweep_cavity_speedup.png")
+title!(p1, "igmres speed-up at k=$k (cavity$op_label)")
+savefig(p1, "tol_sweep_cavity_speedup$suffix.png")
 
 p2 = plot(df.tol, df.rel_error; label="cavity", marker=:circle, xaxis=:log, yaxis=:log)
 plot!(p2, df.tol, df.tol; label="tol", linestyle=:dash, color=:black)
 xlabel!(p2, "Overall tolerance")
 ylabel!(p2, "Relative residual ||L*y - g||/||g||")
-title!(p2, "igmres accuracy at k=$k (cavity)")
-savefig(p2, "tol_sweep_cavity_accuracy.png")
+title!(p2, "igmres accuracy at k=$k (cavity$op_label)")
+savefig(p2, "tol_sweep_cavity_accuracy$suffix.png")
 
 p3 = plot(df.tol, df.igmres_it; label="igmres", marker=:circle, xaxis=:log)
 plot!(p3, df.tol, df.exact_it; label="exact_gmres", marker=:circle, linestyle=:dash)
 xlabel!(p3, "Overall tolerance")
 ylabel!(p3, "Iterations")
-title!(p3, "Iteration count at k=$k (cavity)")
-savefig(p3, "tol_sweep_cavity_iterations.png")
+title!(p3, "Iteration count at k=$k (cavity$op_label)")
+savefig(p3, "tol_sweep_cavity_iterations$suffix.png")
