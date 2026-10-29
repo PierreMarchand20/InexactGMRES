@@ -153,7 +153,8 @@ function mathieu_angular(m, q, kind; vectors=true)
     F = eigen(M)
     coef = F.vectors[:, j+1]
     kind == :even && iseven(m) && (coef[1] /= sqrt(2))
-    return F.values[j+1], θ -> sum(coef[i] * trig(n[i] * θ) for i in 1:N)
+    # `let`: `n` and `trig` are assigned in branches, so capturing them directly boxes them (~15× slower)
+    return F.values[j+1], let n = n, trig = trig; θ -> sum(coef[i] * trig(n[i] * θ) for i in 1:N); end
 end
 
 """
@@ -176,12 +177,12 @@ function mathieu_radial(α, q, ξ0, kind; steps=20_000)
 end
 
 """
-    ellipse_dirichlet_frequencies(m, kind, kmin, kmax; a=1.0, b=0.5, dk=0.01)
+    ellipse_dirichlet_frequencies(m, kind, kmin, kmax; a=1.0, b=0.5, dk=0.05)
 
 Wavenumbers in `[kmin, kmax]` of the Dirichlet eigenmodes `R(ξ)ce_m(θ)`
 (`kind=:even`) or `R(ξ)se_m(θ)` (`kind=:odd`) of the ellipse.
 """
-function ellipse_dirichlet_frequencies(m, kind, kmin, kmax; a=1.0, b=0.5, dk=0.01)
+function ellipse_dirichlet_frequencies(m, kind, kmin, kmax; a=1.0, b=0.5, dk=0.05)
     c = sqrt(a^2 - b^2); ξ0 = acosh(a / c)
     R(k) = (q = (k * c / 2)^2; mathieu_radial(first(mathieu_angular(m, q, kind; vectors=false)), q, ξ0, kind)[1])
     ks = Float64[]
