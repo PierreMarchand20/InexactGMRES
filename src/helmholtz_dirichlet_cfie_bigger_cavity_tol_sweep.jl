@@ -5,24 +5,21 @@ using CSV
 include(joinpath(pkgdir(InexactGMRES), "src", "experiment_utils.jl"))
 default(size=(800, 500), titlefontsize=9)
 
-## `--corrected`: singular-corrected operator, outputs suffixed `_corrected`.
-## Without it: the uncorrected operator, as in the first runs.
 ## `--replot`: rebuild the figures from the CSV of a previous run, without solving.
 ## `--npplo=N`: points per wavelength (default 10), part of the output names.
 i = findfirst(startswith("--npplo="), ARGS)
 npplo = i === nothing ? 10 : parse(Int, split(ARGS[i], "=")[2])
-correction = "--corrected" in ARGS
 ## `--direct`: direct CFIE (unknown ∂ₙu). `--deflated`: deflate with the Mathieu
 ## quasimodes selected at each k (needs `--direct`, whose null vectors they approximate).
 direct = "--direct" in ARGS
 deflated = "--deflated" in ARGS
 deflated && !direct && error("--deflated needs --direct")
-suffix = "_npplo$npplo" * (correction ? "_corrected" : "") * (direct ? "_direct" : "") * (deflated ? "_deflated" : "")
-op_label = ", npplo=$npplo" * join([", corrected operator", ", direct", ", deflated"][[correction, direct, deflated]])
+suffix = "_npplo$npplo" * (direct ? "_direct" : "") * (deflated ? "_deflated" : "")
+op_label = ", npplo=$npplo" * join([", direct", ", deflated"][[direct, deflated]])
 θ_mouth = 9π / 10 # mouth arc |θ| > θ_mouth of the inner ellipse
 deflation = deflated ? ((prob, k) -> select_quasimodes(prob.Q, k; θ_mouth)) : nothing
 
-bigger_cavity_problem(k) = cavity_problem(k; geo="elliptic_cavity_bigger_2D", npplo, correction, direct)
+bigger_cavity_problem(k) = cavity_problem(k; geo="elliptic_cavity_bigger_2D", npplo, direct)
 
 ## Fixed geometry and frequency, sweep the overall igmres/exact_gmres
 ## tolerance for the bigger (more closed, narrower-mouth) cavity.

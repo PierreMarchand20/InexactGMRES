@@ -5,15 +5,12 @@ using CSV
 include(joinpath(pkgdir(InexactGMRES), "src", "experiment_utils.jl"))
 default(size=(800, 500), titlefontsize=9)
 
-## `--corrected`: singular-corrected operator, outputs suffixed `_corrected`.
-## Without it: the uncorrected operator, as in the first runs.
 ## `--replot`: rebuild the figures from the CSV of a previous run, without solving.
 ## `--npplo=N`: points per wavelength (default 10), part of the output names.
 i = findfirst(startswith("--npplo="), ARGS)
 npplo = i === nothing ? 10 : parse(Int, split(ARGS[i], "=")[2])
-correction = "--corrected" in ARGS
-suffix = "_npplo$npplo" * (correction ? "_corrected" : "")
-op_label = ", npplo=$npplo" * (correction ? ", corrected operator" : "")
+suffix = "_npplo$npplo"
+op_label = ", npplo=$npplo"
 
 ## Fixed overall tolerance, sweep frequency k for the disk -- baseline with
 ## no interior resonances expected, for comparison against the cavity sweep.
@@ -32,7 +29,7 @@ resonances = read_resonances(
 )
 
 replot = "--replot" in ARGS
-df = replot ? CSV.read("frequency_sweep_disk$suffix.csv", DataFrame) : frequency_sweep(k -> disk_problem(k; npplo, correction), ks; tol)
+df = replot ? CSV.read("frequency_sweep_disk$suffix.csv", DataFrame) : frequency_sweep(k -> disk_problem(k; npplo), ks; tol)
 replot || CSV.write("frequency_sweep_disk$suffix.csv", df)
 
 p1 = plot(df.k, df.exact_it; label="disk exact_gmres", marker=:diamond)

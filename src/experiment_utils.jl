@@ -23,7 +23,7 @@ for a plane wave incident at angle `θ`. Returns a NamedTuple `(; L, g, pde,
 uᵢ)` -- `pde` and `uᵢ` (the incident wave) are included since callers doing
 field reconstruction (not just solving) need them too.
 """
-function assemble_cfie(Q, k; ε=1e-8, θ=π / 4, correction=true)
+function assemble_cfie(Q, k; ε=1e-8, θ=π / 4)
     pde = Inti.Helmholtz(; k, dim=2)
     SL = Inti.SingleLayerKernel(pde)
     DL = Inti.DoubleLayerKernel(pde)
@@ -37,7 +37,7 @@ function assemble_cfie(Q, k; ε=1e-8, θ=π / 4, correction=true)
     L = Inti.assemble_hmatrix(Lop; rtol=ε)
     Id = sparse((0.5 + 0im) * I, size(L))
     axpy!(1.0, Id, L)
-    correction && axpy!(1.0, singular_correction(DL, SL, k, Q), L)
+    axpy!(1.0, singular_correction(DL, SL, k, Q), L)
     return (; L, g, pde, uᵢ)
 end
 
@@ -48,7 +48,7 @@ Direct Dirichlet CFIE `(I/2 + D' - ik*S) ∂ₙu = ∂ₙuᵢ - ik*uᵢ`, the tr
 [`assemble_cfie`](@ref)'s operator, whose unknown is the normal trace `∂ₙu` of
 the total field. Same return values.
 """
-function assemble_cfie_direct(Q, k; ε=1e-8, θ=π / 4, correction=true)
+function assemble_cfie_direct(Q, k; ε=1e-8, θ=π / 4)
     pde = Inti.Helmholtz(; k, dim=2)
     SL = Inti.SingleLayerKernel(pde)
     ADL = Inti.AdjointDoubleLayerKernel(pde)
@@ -60,7 +60,7 @@ function assemble_cfie_direct(Q, k; ε=1e-8, θ=π / 4, correction=true)
     g = map(q -> (im * k * dot(d, q.normal) - im * k) * uᵢ(q.coords), Q)
     L = Inti.assemble_hmatrix(Inti.IntegralOperator(K, Q, Q); rtol=ε)
     axpy!(1.0, sparse((0.5 + 0im) * I, size(L)), L)
-    correction && axpy!(1.0, singular_correction(ADL, SL, k, Q), L)
+    axpy!(1.0, singular_correction(ADL, SL, k, Q), L)
     return (; L, g, pde, uᵢ)
 end
 
@@ -83,14 +83,14 @@ Dirichlet CFIE problem on the unit circle, meshed at `meshsize =
 2π/(npplo*k)` points-per-wavelength. Returns `(; L, g, pde, uᵢ, Q,
 meshsize)`.
 """
-function disk_problem(k; npplo=10, qorder=4, ε=1e-8, θ=π / 4, correction=true)
+function disk_problem(k; npplo=10, qorder=4, ε=1e-8, θ=π / 4)
     meshsize = 2π / (npplo * k)
     circle = Inti.parametric_curve(0.0, 1.0; labels=["circle"]) do s
         return SVector(cos(2π * s[1]), sin(2π * s[1]))
     end
     msh = Inti.meshgen(circle; meshsize)
     Q = Inti.Quadrature(msh; qorder)
-    return (; assemble_cfie(Q, k; ε, θ, correction)..., Q, meshsize)
+    return (; assemble_cfie(Q, k; ε, θ)..., Q, meshsize)
 end
 
 """
@@ -104,7 +104,7 @@ x = cos(9π/10) instead of cos(7π/10), so a narrower mouth). `direct=true`
 assembles [`assemble_cfie_direct`](@ref) instead. Returns `(; L, g, pde, uᵢ,
 Q, meshsize)`.
 """
-function cavity_problem(k; geo="elliptic_cavity_2D", npplo=10, qorder=4, gorder=2, ε=1e-8, θ=π / 4, direct=false, correction=true)
+function cavity_problem(k; geo="elliptic_cavity_2D", npplo=10, qorder=4, gorder=2, ε=1e-8, θ=π / 4, direct=false)
     meshsize = 2π / (npplo * k)
     filename = joinpath(pkgdir(InexactGMRES), "data", "$geo.geo")
     gmsh.initialize()
@@ -120,7 +120,7 @@ function cavity_problem(k; geo="elliptic_cavity_2D", npplo=10, qorder=4, gorder=
     Γ = Inti.boundary(Ω)
     Γ_msh = view(msh, Γ)
     Q = Inti.Quadrature(Γ_msh; qorder)
-    return (; (direct ? assemble_cfie_direct : assemble_cfie)(Q, k; ε, θ, correction)..., Q, meshsize)
+    return (; (direct ? assemble_cfie_direct : assemble_cfie)(Q, k; ε, θ)..., Q, meshsize)
 end
 
 ## Quasimodes of the elliptic cavity: Dirichlet eigenmodes of the inner ellipse

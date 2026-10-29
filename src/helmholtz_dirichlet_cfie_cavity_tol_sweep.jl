@@ -5,20 +5,17 @@ using CSV
 include(joinpath(pkgdir(InexactGMRES), "src", "experiment_utils.jl"))
 default(size=(800, 500), titlefontsize=9)
 
-## `--corrected`: singular-corrected operator, outputs suffixed `_corrected`.
-## Without it: the uncorrected operator, as in the first runs.
 ## `--replot`: rebuild the figures from the CSV of a previous run, without solving.
 ## `--npplo=N`: points per wavelength (default 10), part of the output names.
 i = findfirst(startswith("--npplo="), ARGS)
 npplo = i === nothing ? 10 : parse(Int, split(ARGS[i], "=")[2])
-correction = "--corrected" in ARGS
 ## `--direct`: direct CFIE (unknown ∂ₙu). `--deflated`: deflate with the Mathieu
 ## quasimodes selected at each k (needs `--direct`, whose null vectors they approximate).
 direct = "--direct" in ARGS
 deflated = "--deflated" in ARGS
 deflated && !direct && error("--deflated needs --direct")
-suffix = "_npplo$npplo" * (correction ? "_corrected" : "") * (direct ? "_direct" : "") * (deflated ? "_deflated" : "")
-op_label = ", npplo=$npplo" * join([", corrected operator", ", direct", ", deflated"][[correction, direct, deflated]])
+suffix = "_npplo$npplo" * (direct ? "_direct" : "") * (deflated ? "_deflated" : "")
+op_label = ", npplo=$npplo" * join([", direct", ", deflated"][[direct, deflated]])
 θ_mouth = 7π / 10 # mouth arc |θ| > θ_mouth of the inner ellipse
 deflation = deflated ? ((prob, k) -> select_quasimodes(prob.Q, k; θ_mouth)) : nothing
 
@@ -30,7 +27,7 @@ k = 100.0
 tols = [1e-2, 1e-4, 1e-6, 1e-8]
 
 replot = "--replot" in ARGS
-df = replot ? CSV.read("tol_sweep_cavity$suffix.csv", DataFrame) : tol_sweep(k -> cavity_problem(k; npplo, correction, direct), k, tols; deflation)
+df = replot ? CSV.read("tol_sweep_cavity$suffix.csv", DataFrame) : tol_sweep(k -> cavity_problem(k; npplo, direct), k, tols; deflation)
 replot || CSV.write("tol_sweep_cavity$suffix.csv", df)
 
 p1 = plot(df.tol, df.speedup; label="cavity", marker=:circle, xaxis=:log)
