@@ -457,7 +457,7 @@ version = "2.1.2+0"
 
 [[deps.HMatrices]]
 deps = ["Distributed", "LinearAlgebra", "Printf", "RecipesBase", "SparseArrays", "StaticArrays", "Statistics"]
-git-tree-sha1 = "9c61e20f5f076c1297e479d9b6a754b9b31cdb55"
+git-tree-sha1 = "508e0a1851e641661b70b2c658776a1ba07394ba"
 repo-rev = "inexact-hmatrix"
 repo-url = "https://github.com/PierreMarchand20/HMatrices.jl"
 uuid = "8646bddf-ab1c-4fa7-9c51-ba187d647618"
