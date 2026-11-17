@@ -367,9 +367,9 @@ signatures of a nearby scattering resonance.
 
 Timing uses a single `@elapsed` call per solve rather than
 `BenchmarkTools` (a full `@benchmark` per point, times 3 solves times
-dozens of k's, would add many minutes of pure benchmarking overhead); one
-warm-up solve is run first so the first sweep point isn't contaminated by
-JIT compilation. This makes individual speedup values noisier than
+dozens of k's, would add many minutes of pure benchmarking overhead); the
+first `k` is run twice so the first sweep point isn't contaminated by JIT
+compilation. This makes individual speedup values noisier than
 `tol_sweep`'s, but the trend across the whole sweep should still be
 visible.
 
@@ -403,18 +403,16 @@ factor `safety` (default 0.25). It adds the columns `igmres_it_estimated`,
 `true_res_estimated` and `work_ratio_estimated`.
 """
 function frequency_sweep(builder, ks; tol, bound_factor=1.0, deflation=nothing, igmres_kwargs=(;), estimated=false, safety=0.25)
-    (; L, g) = builder(first(ks))
-    InexactGMRES.exact_gmres(L, g; tol)
-    # warm up both heuristics' distinct closure types, not just the default
-    # precision_strategy, so the first sweep point isn't contaminated
-    dummy_sigma_m, dummy_it = 1.0, 1
-    igmres(L, g; tol, precision_strategy=(res, t) -> InexactGMRES.rel_to_eps(dummy_sigma_m / dummy_it, res, t))
-    igmres(L, g; tol, precision_strategy=(res, t) -> InexactGMRES.rel_to_eps(bound_factor, res, t))
-
-    rows = map(ks) do k
+    # the first k is run twice and its first row dropped: it compiles the
+    # closures of the loop body, so that no timing includes compilation
+    rows = map(vcat(first(ks), ks)) do k
         prob = builder(k)
         (; L, g) = prob
         U = deflation === nothing ? nothing : deflation(prob, k)
+        # collect the assembly's garbage and touch the whole matrix once: otherwise
+        # the first timed solve pays for both (3x slower first pass on the sphere at k = 18)
+        InexactGMRES.accurate_mul(L, g)
+        GC.gc()
         exact_time = @elapsed ((exact_it, Hmat) = deflated_exact_gmres(L, g, U; tol))
         sigma_m = svd(Hmat).S[end]
 
@@ -423,8 +421,10 @@ function frequency_sweep(builder, ks; tol, bound_factor=1.0, deflation=nothing, 
 
         restarts_sigma, restarts_constant = Int[], Int[] # iterations of the restarts after a failed true-residual check
         eta_sigma, eta_constant = Float64[], Float64[]   # matvec tolerances actually used
+        GC.gc()
         sigma_time = @elapsed ((_, _, igmres_it_sigma) = igmres(L, g; tol, precision_strategy=sigma_strategy, deflation=U,
             correction_log=restarts_sigma, eta_log=eta_sigma, igmres_kwargs...))
+        GC.gc()
         constant_time = @elapsed ((_, _, igmres_it_constant_factor) = igmres(L, g; tol, precision_strategy=constant_strategy, deflation=U,
             correction_log=restarts_constant, eta_log=eta_constant, igmres_kwargs...))
         p = U === nothing ? 0 : size(U, 2)
@@ -438,6 +438,7 @@ function frequency_sweep(builder, ks; tol, bound_factor=1.0, deflation=nothing, 
         extra = (;)
         if estimated
             restarts_est, eta_est = Int[], Float64[]
+            GC.gc()
             time_est = @elapsed ((x_est, _, it_est) = igmres(L, g; tol, deflation=U, estimate_sigma=true, calibrate=true,
                 precision_strategy=(res, t) -> InexactGMRES.rel_to_eps(safety, res, t),
                 correction_log=restarts_est, eta_log=eta_est, igmres_kwargs...))
@@ -462,7 +463,7 @@ function frequency_sweep(builder, ks; tol, bound_factor=1.0, deflation=nothing, 
             work_ratio_sigma=relaxed_work(L, eta_sigma) / (exact_it + p),
             work_ratio_constant_factor=relaxed_work(L, eta_constant) / (exact_it + p), extra...)
     end
-    return DataFrame(rows)
+    return DataFrame(rows[2:end])
 end
 
 """
