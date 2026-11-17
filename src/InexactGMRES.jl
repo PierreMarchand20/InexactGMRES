@@ -11,7 +11,7 @@ include("utils.jl")
 
 """
     igmres(A, b; maxiter, restart, see_r, tol, precision_strategy=rel_to_eps, track_true_residual=false, track_bound=false,
-           on_budget=:none, budget_factor=0.5, max_corrections=10, correction_log=nothing)
+           max_corrections=10, correction_log=nothing, recycle=10, relaxed_recycling=false, eta_log=nothing, deflation=nothing)
 
 `precision_strategy(res, tol)` computes the relative tolerance used for the
 approximate matrix-vector product at each iteration, given the current
@@ -49,7 +49,8 @@ residual, and all later tolerances are multiplied by
 `0.5 * tol * ‖b‖ / ‖b - A*x‖`. This happens at most `max_corrections`
 times (`0` disables the check); after that, `x` is returned as is. The
 iteration counts at which corrections happen are pushed to `correction_log`
-when a vector is given, and the matvec tolerances actually used to `eta_log`.
+when a vector is given, and the tolerance of every product of the solve to
+`eta_log` (`0.0` for the accurate ones).
 A cycle also ends after `restart` iterations, and
 the next one starts from the current iterate.
 
@@ -59,7 +60,12 @@ Mackey, Johnson & Maiti, SIAM J. Sci. Comput., 2006). `C = A*U` is
 recomputed with `recycle` accurate matvecs (the relaxed products of the last
 cycle are not accurate enough), and the next cycle minimizes over
 `span(U) + K((I - CCᴴ)A, (I - CCᴴ)r0)`. `0` disables it; it is only done for
-complex problems.
+complex problems. With `relaxed_recycling=true`, these products are relaxed
+like the Arnoldi ones, with the tolerance scaled by `|θ_min|/‖A‖` (smallest
+harmonic Ritz value kept, `‖A‖` estimated from the Hessenberg columns): the
+normalized `U` has norm ≈ `1/|θ_min|`, so the error of `A*U` is amplified by
+`‖A‖/|θ_min|` in the residual gap. Near-singular recycled directions thus
+still get nearly accurate products.
 
 `deflation`, a matrix whose columns span an approximate invariant subspace
 (e.g. quasimodes), deflates the solve from the start the same way (one
@@ -67,7 +73,7 @@ accurate matvec per column).
 """
 function igmres(A, b; maxiter=size(A, 2), restart=min(length(b), size(A, 2)), see_r=false, tol=sqrt(eps()),
                 precision_strategy=rel_to_eps, track_true_residual=false, track_bound=false,
-                max_corrections=10, correction_log=nothing, recycle=10, eta_log=nothing, deflation=nothing)
+                max_corrections=10, correction_log=nothing, recycle=10, relaxed_recycling=false, eta_log=nothing, deflation=nothing)
     T = promote_type(eltype(A), eltype(b))
     bheta = norm(b)
     residuals = Float64[]
@@ -80,12 +86,15 @@ function igmres(A, b; maxiter=size(A, 2), restart=min(length(b), size(A, 2)), se
     it = 0
     corrections = 0
     scale = 1.0 # shrinks the requested tolerances after each correction
+    normA = 0.0 # lower bound on ‖A‖ from the Hessenberg columns
+    log_accurate(n=1) = eta_log === nothing || append!(eta_log, zeros(n))
     U = zeros(T, length(b), 0) # recycled space, with C = A*U orthonormal
     C = zeros(T, length(b), 0)
     if deflation !== nothing
         F = qr(reduce(hcat, [accurate_mul(A, u) for u in eachcol(deflation)])) # accurate C = A*U
         C = Matrix(F.Q)
         U = deflation / F.R
+        log_accurate(size(U, 2))
     end
 
     while it < maxiter
@@ -118,6 +127,7 @@ function igmres(A, b; maxiter=size(A, 2), restart=min(length(b), size(A, 2)), se
             H[k][k+1] = norm(w)
             Q[k+1] = w / H[k][k+1]
             push!(H_raw, copy(H[k]))
+            normA = max(normA, sqrt(norm(H_raw[k])^2 + norm(B[k])^2)) # ‖A v_k‖
             my_rotation!(H, J, e1, k)
             triangularsquares!(y, H, e1[1:k])
             res = abs(e1[k+1])
@@ -146,6 +156,7 @@ function igmres(A, b; maxiter=size(A, 2), restart=min(length(b), size(A, 2)), se
             if res / bheta < tol
                 sol = gcro_solution(x0, Q, y, U, B, k)
                 r = corrections < max_corrections ? b - accurate_mul(A, sol) : nothing
+                r === nothing || log_accurate()
                 if r === nothing || norm(r) < tol * bheta
                     track_true_residual && track_bound && return sol, residuals, it, true_residuals, residual_gap, bound_right4
                     track_true_residual && return sol, residuals, it, true_residuals, residual_gap
@@ -161,11 +172,18 @@ function igmres(A, b; maxiter=size(A, 2), restart=min(length(b), size(A, 2)), se
             end
         end
         # new cycle from the current iterate, with an exact residual
-        corrected || (x0 = gcro_solution(x0, Q, y, U, B, k); r0 = b - accurate_mul(A, x0))
+        corrected || (x0 = gcro_solution(x0, Q, y, U, B, k); r0 = b - accurate_mul(A, x0); log_accurate())
         # ponytail: real problems would need real Schur vectors, skipped (complex conjugate pairs)
         if recycle > 0 && T <: Complex && it < maxiter
-            U = harmonic_ritz_vectors(U, C, Q, H_raw, B, k, recycle)
-            F = qr(reduce(hcat, [accurate_mul(A, u) for u in eachcol(U)])) # accurate C = A*U
+            U, θ = harmonic_ritz_vectors(U, C, Q, H_raw, B, k, recycle)
+            ηU = 0.0
+            if relaxed_recycling && A_iterable isa HMatrices.ITerm
+                ηU = min(scale * minimum(abs, θ) / normA * precision_strategy(norm(r0) / bheta, tol), 1.0)
+                A_iterable.rtol = ηU
+            end
+            mulU(u) = ηU == 0 ? accurate_mul(A, u) : mul!(similar(u), A_iterable, u, 1, 0; threads=false)
+            F = qr(reduce(hcat, [mulU(u) for u in eachcol(U)])) # C = A*U
+            eta_log === nothing || append!(eta_log, fill(ηU, size(U, 2)))
             C = Matrix(F.Q)
             U = U / F.R
         end

@@ -227,7 +227,7 @@ end
     harmonic_ritz_vectors(U, C, Q, H_raw, B, k, p)
 
 The `p` harmonic Ritz vectors of `A` with the smallest harmonic Ritz values
-in `span([U V_k])`, using `A [U V_k] = [C V_{k+1}] G` with
+in `span([U V_k])`, and their harmonic Ritz values, using `A [U V_k] = [C V_{k+1}] G` with
 `G = [I B; 0 H̄_k]` (GCRO-DR, Parks et al. 2006): `Gᴴ G z = θ Gᴴ [C V_{k+1}]ᴴ [U V_k] z`.
 """
 function harmonic_ritz_vectors(U, C, Q, H_raw, B, k, p)
@@ -242,5 +242,5 @@ function harmonic_ritz_vectors(U, C, Q, H_raw, B, k, p)
     Wp = hcat(C, Q[1:(k+1)]...)
     θ, Z = eigen(G' * G, G' * (Wp' * W))
     idx = sortperm(abs.(θ))[1:min(p, q + k)]
-    return W * Z[:, idx]
+    return W * Z[:, idx], θ[idx]
 end

@@ -414,25 +414,24 @@ function frequency_sweep(builder, ks; tol, bound_factor=1.0, deflation=nothing)
             size=length(g), p, exact_time, time_sigma=sigma_time, time_constant_factor=constant_time,
             compression, compression_1e2=InexactGMRES.effective_compression_ratio(L, 1e-2),
             compression_1=InexactGMRES.effective_compression_ratio(L, 1.0),
-            work_ratio_sigma=relaxed_work(L, eta_sigma, length(restarts_sigma), p) / (exact_it + p),
-            work_ratio_constant_factor=relaxed_work(L, eta_constant, length(restarts_constant), p) / (exact_it + p))
+            work_ratio_sigma=relaxed_work(L, eta_sigma) / (exact_it + p),
+            work_ratio_constant_factor=relaxed_work(L, eta_constant) / (exact_it + p))
     end
     return DataFrame(rows)
 end
 
 """
-    relaxed_work(L, etas, restarts, p; recycle=10)
+    relaxed_work(L, etas)
 
-Work of a relaxed `igmres` solve in units of one accurate product: each
-product at tolerance `η` in `etas` counts for the share of the H-matrix
-entries it uses ([`effective_compression_ratio`](@ref)), plus the accurate
-products: the true-residual checks (`restarts + 1`), the recycling after each
-restart (`recycle` each) and the deflation space (`p`).
+Work of a relaxed `igmres` solve in units of one accurate product, from its
+`eta_log` (every product of the solve): each product at tolerance `η` counts
+for the share of the H-matrix entries it uses
+([`effective_compression_ratio`](@ref)), so accurate products (`η = 0`:
+true-residual checks, recycling, deflation space) count for 1.
 """
-function relaxed_work(L, etas, restarts, p; recycle=10)
+function relaxed_work(L, etas)
     full = InexactGMRES.effective_compression_ratio(L, 0.0)
-    relaxed = sum(η -> full / InexactGMRES.effective_compression_ratio(L, η), etas; init=0.0)
-    return relaxed + (restarts + 1) + recycle * restarts + p
+    return sum(η -> full / InexactGMRES.effective_compression_ratio(L, η), etas; init=0.0)
 end
 
 """
