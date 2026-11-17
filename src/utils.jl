@@ -214,6 +214,30 @@ function effective_compression_ratio(H::HMatrices.HMatrix, rtols::AbstractVector
 end
 
 """
+    dropped_term_estimate(H, x, η)
+
+Estimate of `‖E x‖`, the error of the product by `H` truncated at `η`
+(`HMatrices.ITerm`): the first dropped ACA term of each low-rank block,
+applied to `x`. Costs one rank-one term per low-rank block.
+"""
+function dropped_term_estimate(H::HMatrices.HMatrix, x, η)
+    xp = x[HMatrices.colperm(H)]
+    y = zeros(promote_type(eltype(H), eltype(x)), size(H, 1)) # permuted, which leaves the norm unchanged
+    off = HMatrices.pivot(H) .- 1
+    for leaf in HMatrices.leaves(H)
+        HMatrices.isadmissible(leaf) || continue
+        R = HMatrices.data(leaf)
+        r = length(R.rel_er) # terms beyond it are never dropped
+        k = findlast(>(η), R.rel_er)
+        k = min(isnothing(k) ? 1 : k + 1, r)
+        k == r && continue
+        I, J = HMatrices.rowrange(leaf) .- off[1], HMatrices.colrange(leaf) .- off[2]
+        y[I] .+= view(R.A, :, k + 1) .* dot(view(R.B, :, k + 1), view(xp, J))
+    end
+    return norm(y)
+end
+
+"""
     gcro_solution(x0, Q, y, U, B, k)
 
 Iterate `x0 + V_k y - U B y` of a GCRO cycle: with `C = A U`, `B = Cᴴ A V_k` and

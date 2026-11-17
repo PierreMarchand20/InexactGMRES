@@ -427,11 +427,15 @@ Work of a relaxed `igmres` solve in units of one accurate product, from its
 `eta_log` (every product of the solve): each product at tolerance `η` counts
 for the share of the H-matrix entries it uses
 ([`effective_compression_ratio`](@ref)), so accurate products (`η = 0`:
-true-residual checks, recycling, deflation space) count for 1.
+true-residual checks, recycling, deflation space) count for 1, and error
+estimates (`NaN`, see [`dropped_term_estimate`](@ref)) for one term per
+low-rank block.
 """
 function relaxed_work(L, etas)
     full = InexactGMRES.effective_compression_ratio(L, 0.0)
-    return sum(η -> full / InexactGMRES.effective_compression_ratio(L, η), etas; init=0.0)
+    # error estimate (NaN): one term per low-rank block, relative to the used(0) = length(L)/full entries
+    estimate = full / length(L) * sum(sum(size(l)) for l in HMatrices.leaves(L) if HMatrices.isadmissible(l); init=0)
+    return sum(η -> isnan(η) ? estimate : full / InexactGMRES.effective_compression_ratio(L, η), etas; init=0.0)
 end
 
 """

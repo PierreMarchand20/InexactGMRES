@@ -11,7 +11,7 @@ include("utils.jl")
 
 """
     igmres(A, b; maxiter, restart, see_r, tol, precision_strategy=rel_to_eps, track_true_residual=false, track_bound=false,
-           max_corrections=10, correction_log=nothing, recycle=10, relaxed_recycling=false, eta_log=nothing, deflation=nothing)
+           max_corrections=10, correction_log=nothing, recycle=10, relaxed_recycling=false, calibrate=false, eta_log=nothing, deflation=nothing)
 
 `precision_strategy(res, tol)` computes the relative tolerance used for the
 approximate matrix-vector product at each iteration, given the current
@@ -67,13 +67,21 @@ normalized `U` has norm ≈ `1/|θ_min|`, so the error of `A*U` is amplified by
 `‖A‖/|θ_min|` in the residual gap. Near-singular recycled directions thus
 still get nearly accurate products.
 
+With `calibrate=true`, the requested tolerances are taken as targets for the
+product error `‖E v‖/‖v‖` itself rather than for `η`: the ratio
+`c = ‖E v‖/(η‖v‖)` is estimated with [`dropped_term_estimate`](@ref) once per
+decade of `η` (it depends little on `v`), and the product uses `η = target/c`.
+The recycling target is then `|θ_min|` times the Arnoldi one, without `‖A‖`.
+Each estimate is logged as `NaN` in `eta_log`.
+
 `deflation`, a matrix whose columns span an approximate invariant subspace
 (e.g. quasimodes), deflates the solve from the start the same way (one
 accurate matvec per column).
 """
 function igmres(A, b; maxiter=size(A, 2), restart=min(length(b), size(A, 2)), see_r=false, tol=sqrt(eps()),
                 precision_strategy=rel_to_eps, track_true_residual=false, track_bound=false,
-                max_corrections=10, correction_log=nothing, recycle=10, relaxed_recycling=false, eta_log=nothing, deflation=nothing)
+                max_corrections=10, correction_log=nothing, recycle=10, relaxed_recycling=false, calibrate=false,
+                eta_log=nothing, deflation=nothing)
     T = promote_type(eltype(A), eltype(b))
     bheta = norm(b)
     residuals = Float64[]
@@ -88,6 +96,20 @@ function igmres(A, b; maxiter=size(A, 2), restart=min(length(b), size(A, 2)), se
     scale = 1.0 # shrinks the requested tolerances after each correction
     normA = 0.0 # lower bound on ‖A‖ from the Hessenberg columns
     log_accurate(n=1) = eta_log === nothing || append!(eta_log, zeros(n))
+    calib = Dict{Int,Float64}() # c = ‖E v‖/(η‖v‖) per decade of η
+    # η such that ‖E v‖/‖v‖ ≈ ε, measuring c when η enters a new decade
+    function calibrated(ε, v)
+        (calibrate && A_iterable isa HMatrices.ITerm) || return min(ε, 1.0)
+        c = 1.0
+        for _ in 1:2 # η = ε/c can move to another decade once
+            η = min(ε / c, 1.0)
+            c = get!(calib, floor(Int, log10(η))) do
+                eta_log === nothing || push!(eta_log, NaN)
+                max(dropped_term_estimate(A, v, η) / (η * norm(v)), eps())
+            end
+        end
+        return min(ε / c, 1.0)
+    end
     U = zeros(T, length(b), 0) # recycled space, with C = A*U orthonormal
     C = zeros(T, length(b), 0)
     if deflation !== nothing
@@ -115,9 +137,10 @@ function igmres(A, b; maxiter=size(A, 2), restart=min(length(b), size(A, 2)), se
         corrected = false
         while k < restart && it < maxiter
             k += 1
-            η = min(scale * precision_strategy(res / bheta, tol), 1.0)
+            ε = scale * precision_strategy(res / bheta, tol) # target for ‖E v_k‖
+            η = calibrated(ε, Q[k])
             A_iterable isa HMatrices.ITerm && (A_iterable.rtol = η)
-            push!(eta, η)
+            push!(eta, calibrate ? min(ε, 1.0) : η)
             eta_log === nothing || push!(eta_log, η)
             my_arnoldi!(Q, H, A_iterable, k)
             # project the new vector out of span(C); since V ⊥ C, H[k][1:k] is unchanged
@@ -178,7 +201,8 @@ function igmres(A, b; maxiter=size(A, 2), restart=min(length(b), size(A, 2)), se
             U, θ = harmonic_ritz_vectors(U, C, Q, H_raw, B, k, recycle)
             ηU = 0.0
             if relaxed_recycling && A_iterable isa HMatrices.ITerm
-                ηU = min(scale * minimum(abs, θ) / normA * precision_strategy(norm(r0) / bheta, tol), 1.0)
+                εU = scale * minimum(abs, θ) * precision_strategy(norm(r0) / bheta, tol)
+                ηU = calibrate ? calibrated(εU, U[:, 1]) : min(εU / normA, 1.0)
                 A_iterable.rtol = ηU
             end
             mulU(u) = ηU == 0 ? accurate_mul(A, u) : mul!(similar(u), A_iterable, u, 1, 0; threads=false)
