@@ -177,7 +177,8 @@ end
 Like `HMatrices.compression_ratio(H)`, but counting only the rank-1 terms
 `HMatrices.ITerm`'s inexact matvec would actually use at the given `rtol`
 for each admissible (low-rank) leaf -- up to the term after the last one
-with `R.rel_er > rtol`, the same truncation `ITerm`'s own `mul!` applies -- instead of
+with `R.rel_er > rtol`, plus any terms beyond `R.rel_er`, the same truncation
+`ITerm`'s own `mul!` applies -- instead of
 each leaf's full stored rank. Full (non-admissible) leaves always cost
 their dense size, same as the exact product. A value higher than
 `HMatrices.compression_ratio(H)` means the inexact product at this `rtol`
@@ -197,9 +198,10 @@ function effective_compression_ratio(H::HMatrices.HMatrix, rtol::Float64)
         m, n = size(leaf)
         if HMatrices.isadmissible(leaf)
             R = HMatrices.data(leaf)
+            r = length(R.rel_er) # columns beyond it (sparse corrections added by axpy!) are always used
             k = findlast(x -> x > rtol, R.rel_er)
-            k = min(isnothing(k) ? 1 : k + 1, size(R.A, 2))
-            used += k * (m + n)
+            k = min(isnothing(k) ? 1 : k + 1, r)
+            used += (k + size(R.A, 2) - r) * (m + n)
         else
             used += m * n
         end
