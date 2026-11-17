@@ -2,7 +2,7 @@
 
 julia_version = "1.13.0"
 manifest_format = "2.1"
-project_hash = "6d22b1289e7944c5bfac9f4f0626da405dca2e90"
+project_hash = "24a7ae5fd798f535a375e6e92ceb56819a69f5ef"
 
 [[deps.AbstractTrees]]
 git-tree-sha1 = "2d9c9a55f9c93e8887ad391fbae72f8ef55e1177"
@@ -478,7 +478,7 @@ uuid = "e33a78d0-f292-5ffc-b300-72abe9b543c8"
 version = "2.14.0+0"
 
 [[deps.InexactGMRES]]
-deps = ["BenchmarkTools", "CSV", "DataFrames", "Gmsh", "HMatrices", "Inti", "IterativeSolvers", "LinearAlgebra", "Plots", "Random", "SparseArrays", "StaticArrays", "Test"]
+deps = ["BenchmarkTools", "Bessels", "CSV", "DataFrames", "Gmsh", "HMatrices", "Inti", "IterativeSolvers", "LinearAlgebra", "Plots", "Random", "SparseArrays", "StaticArrays", "Test"]
 path = "."
 uuid = "e84be53d-90e6-46a5-8c12-c1965ae10a3a"
 version = "0.1.0"

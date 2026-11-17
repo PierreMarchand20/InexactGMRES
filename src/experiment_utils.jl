@@ -18,19 +18,20 @@ using InexactGMRES
 """
     assemble_cfie(Q, k; ε=1e-8, θ=π/4)
 
-Assembles the Dirichlet CFIE (D - ik*S) H-matrix and RHS on quadrature `Q`,
-for a plane wave incident at angle `θ`. Returns a NamedTuple `(; L, g, pde,
+Assembles the Dirichlet CFIE (D - ik*S) H-matrix and RHS on quadrature `Q`
+(2D or 3D), for a plane wave incident at angle `θ` (in the xy-plane). Returns a NamedTuple `(; L, g, pde,
 uᵢ)` -- `pde` and `uᵢ` (the incident wave) are included since callers doing
 field reconstruction (not just solving) need them too.
 """
 function assemble_cfie(Q, k; ε=1e-8, θ=π / 4)
-    pde = Inti.Helmholtz(; k, dim=2)
+    dim = length(first(Q).coords)
+    pde = Inti.Helmholtz(; k, dim)
     SL = Inti.SingleLayerKernel(pde)
     DL = Inti.DoubleLayerKernel(pde)
     K = let SL = SL, DL = DL, k = k
         (t, q) -> DL(t, q) - im * k * SL(t, q)
     end
-    d = SVector(cos(θ), sin(θ))
+    d = dim == 2 ? SVector(cos(θ), sin(θ)) : SVector(cos(θ), sin(θ), 0.0)
     uᵢ = (x) -> exp(im * k * dot(x, d))
     g = map(q -> -uᵢ(q.coords), Q)
     Lop = Inti.IntegralOperator(K, Q, Q)
@@ -90,6 +91,30 @@ function disk_problem(k; npplo=10, qorder=4, ε=1e-8, θ=π / 4)
     end
     msh = Inti.meshgen(circle; meshsize)
     Q = Inti.Quadrature(msh; qorder)
+    return (; assemble_cfie(Q, k; ε, θ)..., Q, meshsize)
+end
+
+"""
+    sphere_problem(k; npplo=10, qorder=2, gorder=2, ε=1e-8, θ=π/4)
+
+Dirichlet CFIE problem on the unit sphere, meshed with second-order
+triangles of size `meshsize = 2π/(npplo*k)`. Returns `(; L, g, pde, uᵢ, Q,
+meshsize)`.
+"""
+function sphere_problem(k; npplo=10, qorder=2, gorder=2, ε=1e-8, θ=π / 4)
+    meshsize = 2π / (npplo * k)
+    gmsh.initialize()
+    gmsh.option.setNumber("General.Verbosity", 2)
+    gmsh.option.setNumber("Mesh.MeshSizeMax", meshsize)
+    gmsh.option.setNumber("Mesh.MeshSizeMin", meshsize)
+    gmsh.model.occ.addSphere(0, 0, 0, 1)
+    gmsh.model.occ.synchronize()
+    gmsh.model.mesh.generate(2)
+    gmsh.model.mesh.setOrder(gorder)
+    msh = Inti.import_mesh(; dim=3)
+    gmsh.finalize()
+    Ω = Inti.Domain(e -> Inti.geometric_dimension(e) == 3, Inti.entities(msh))
+    Q = Inti.Quadrature(view(msh, Inti.boundary(Ω)); qorder)
     return (; assemble_cfie(Q, k; ε, θ)..., Q, meshsize)
 end
 
@@ -368,8 +393,16 @@ and the work of each relaxed solve relative to the exact one
 `nothing`; `p` is its dimension). All solves are then deflated by it, the
 exact one through [`deflated_exact_gmres`](@ref), whose `H_m` gives
 `sigma_m`; the timings include building `C = L*U`.
+
+`igmres_kwargs` are passed to every `igmres` call (e.g.
+`(; relaxed_recycling=true)`). With `estimated=true`, a third relaxed solve
+uses the practical safe strategy: `σ_m/m` estimated on the fly and
+calibrated products (`estimate_sigma=true, calibrate=true`), with a safety
+factor `safety` (default 0.25). It adds the columns `igmres_it_estimated`,
+`restarts_estimated`, `time_estimated`, `speedup_estimated`,
+`true_res_estimated` and `work_ratio_estimated`.
 """
-function frequency_sweep(builder, ks; tol, bound_factor=1.0, deflation=nothing)
+function frequency_sweep(builder, ks; tol, bound_factor=1.0, deflation=nothing, igmres_kwargs=(;), estimated=false, safety=0.25)
     (; L, g) = builder(first(ks))
     InexactGMRES.exact_gmres(L, g; tol)
     # warm up both heuristics' distinct closure types, not just the default
@@ -391,16 +424,28 @@ function frequency_sweep(builder, ks; tol, bound_factor=1.0, deflation=nothing)
         restarts_sigma, restarts_constant = Int[], Int[] # iterations of the restarts after a failed true-residual check
         eta_sigma, eta_constant = Float64[], Float64[]   # matvec tolerances actually used
         sigma_time = @elapsed ((_, _, igmres_it_sigma) = igmres(L, g; tol, precision_strategy=sigma_strategy, deflation=U,
-            correction_log=restarts_sigma, eta_log=eta_sigma))
+            correction_log=restarts_sigma, eta_log=eta_sigma, igmres_kwargs...))
         constant_time = @elapsed ((_, _, igmres_it_constant_factor) = igmres(L, g; tol, precision_strategy=constant_strategy, deflation=U,
-            correction_log=restarts_constant, eta_log=eta_constant))
+            correction_log=restarts_constant, eta_log=eta_constant, igmres_kwargs...))
         p = U === nothing ? 0 : size(U, 2)
         compression = InexactGMRES.effective_compression_ratio(L, 0.0)
 
         # separate untimed runs: track_true_residual adds an exact matvec per
         # iteration, which would distort the speedups above
-        (_, _, _, true_res_sigma, gap_sigma) = igmres(L, g; tol, precision_strategy=sigma_strategy, track_true_residual=true, deflation=U)
-        (_, _, _, true_res_constant_factor, gap_constant_factor) = igmres(L, g; tol, precision_strategy=constant_strategy, track_true_residual=true, deflation=U)
+        (_, _, _, true_res_sigma, gap_sigma) = igmres(L, g; tol, precision_strategy=sigma_strategy, track_true_residual=true, deflation=U, igmres_kwargs...)
+        (_, _, _, true_res_constant_factor, gap_constant_factor) = igmres(L, g; tol, precision_strategy=constant_strategy, track_true_residual=true, deflation=U, igmres_kwargs...)
+
+        extra = (;)
+        if estimated
+            restarts_est, eta_est = Int[], Float64[]
+            time_est = @elapsed ((x_est, _, it_est) = igmres(L, g; tol, deflation=U, estimate_sigma=true, calibrate=true,
+                precision_strategy=(res, t) -> InexactGMRES.rel_to_eps(safety, res, t),
+                correction_log=restarts_est, eta_log=eta_est, igmres_kwargs...))
+            extra = (; igmres_it_estimated=it_est, restarts_estimated=length(restarts_est), time_estimated=time_est,
+                speedup_estimated=exact_time / time_est,
+                true_res_estimated=norm(g - InexactGMRES.accurate_mul(L, x_est)) / norm(g),
+                work_ratio_estimated=relaxed_work(L, eta_est) / (exact_it + p))
+        end
 
         gnorm = norm(g)
         (; k, exact_it, igmres_it_sigma, igmres_it_constant_factor, sigma_m,
@@ -415,7 +460,7 @@ function frequency_sweep(builder, ks; tol, bound_factor=1.0, deflation=nothing)
             compression, compression_1e2=InexactGMRES.effective_compression_ratio(L, 1e-2),
             compression_1=InexactGMRES.effective_compression_ratio(L, 1.0),
             work_ratio_sigma=relaxed_work(L, eta_sigma) / (exact_it + p),
-            work_ratio_constant_factor=relaxed_work(L, eta_constant) / (exact_it + p))
+            work_ratio_constant_factor=relaxed_work(L, eta_constant) / (exact_it + p), extra...)
     end
     return DataFrame(rows)
 end
@@ -456,6 +501,7 @@ function plot_frequency_extras(df, stem, name, suffix, op_label, resonances; tol
 
     p6 = plot(df.k, df.work_ratio_sigma; label="σ(H_m) heuristic", marker=:circle)
     plot!(p6, df.k, df.work_ratio_constant_factor; label="constant bound factor", marker=:circle, linestyle=:dash)
+    hasproperty(df, :work_ratio_estimated) && plot!(p6, df.k, df.work_ratio_estimated; label="estimated σ_m/m, calibrated", marker=:circle, linestyle=:dot)
     hline!(p6, [1.0]; label="exact GMRES", color=:black)
     vl(p6); xlabel!(p6, "k"); ylabel!(p6, "Work / work of exact GMRES")
     title!(p6, "Work of the relaxed solves vs frequency, $name (tol=$tol$op_label)")
@@ -463,6 +509,7 @@ function plot_frequency_extras(df, stem, name, suffix, op_label, resonances; tol
 
     p7 = plot(df.k, df.restarts_sigma; label="σ(H_m) heuristic", marker=:circle)
     plot!(p7, df.k, df.restarts_constant_factor; label="constant bound factor", marker=:circle, linestyle=:dash)
+    hasproperty(df, :restarts_estimated) && plot!(p7, df.k, df.restarts_estimated; label="estimated σ_m/m, calibrated", marker=:circle, linestyle=:dot)
     vl(p7); xlabel!(p7, "k"); ylabel!(p7, "Restarts (failed true-residual checks)")
     title!(p7, "Restarts vs frequency, $name (tol=$tol$op_label)")
     savefig(p7, "frequency_sweep_$(stem)_restarts$suffix.png")
