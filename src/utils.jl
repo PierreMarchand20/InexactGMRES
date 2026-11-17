@@ -238,21 +238,30 @@ function dropped_term_estimate(H::HMatrices.HMatrix, x, η)
 end
 
 """
-    sigma_over_m(H_raw, k, residuals, tol; window=10)
+    sigma_over_m(H, k, residuals, tol, w; window=10)
 
 On-the-fly estimate of the Simoncini-Szyld factor `σ_m(H̄_m)/m` after `k`
 iterations of the cycle: `σ_min(H̄_k)` over `m̂ = k + ` the iterations still
 needed to reach `tol` at the mean convergence rate of the last `window`
-relative residuals.
+relative residuals. `H` holds the Givens-rotated columns, so
+`σ_min(H̄_k) = σ_min(R_k)` with `R_k` triangular. It is estimated by
+inverse iteration on `R_kᴴ R_k` (O(k²) per call), warm-started from `w`,
+the previous call's vector, updated in place.
 """
-function sigma_over_m(H_raw, k, residuals, tol; window=10)
-    Hbar = zeros(eltype(H_raw[1]), k + 1, k)
+function sigma_over_m(H, k, residuals, tol, w; window=10)
+    R = zeros(eltype(H[1]), k, k)
     for j in 1:k
-        Hbar[1:(j+1), j] = H_raw[j]
+        R[1:j, j] = view(H[j], 1:j)
     end
-    σ = svdvals(Hbar)[end] # ponytail: full SVD each iteration, O(k³); an incremental condition estimator if k gets large
-    w = min(window, length(residuals) - 1)
-    ρ = w > 0 ? (residuals[end] / residuals[end-w])^(1 / w) : 1.0
+    R = UpperTriangular(R)
+    append!(w, ones(k - length(w)))
+    for _ in 1:3
+        w .= R \ (R' \ w)
+        normalize!(w)
+    end
+    σ = norm(R * w) # ≥ σ_min, and close to it once w has converged
+    n = min(window, length(residuals) - 1)
+    ρ = n > 0 ? (residuals[end] / residuals[end-n])^(1 / n) : 1.0
     remaining = ρ < 1 ? max(log(tol / residuals[end]) / log(ρ), 0.0) : float(k) # no rate yet: assume as many again
     return σ / (k + remaining)
 end

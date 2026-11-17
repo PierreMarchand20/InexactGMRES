@@ -126,6 +126,8 @@ function igmres(A, b; maxiter=size(A, 2), restart=min(length(b), size(A, 2)), se
         U = deflation / F.R
         log_accurate(size(U, 2))
     end
+    Ud, Cd = U, C # deflation space, kept as is: recycling works in its complement
+    pd = size(Ud, 2)
 
     while it < maxiter
         x0 += U * (C' * r0) # minimize over span(U) first
@@ -140,6 +142,7 @@ function igmres(A, b; maxiter=size(A, 2), restart=min(length(b), size(A, 2)), se
         eta = Float64[]             # matvec tolerances used in this cycle
         y = zeros(T, restart)       # Krylov coefficients
         B = Vector{Vector{T}}()     # columns of Cᴴ A V
+        wσ = T[]                    # smallest right singular vector estimate of H̄ (estimate_sigma)
         res = β
         k = 0
         corrected = false
@@ -147,7 +150,7 @@ function igmres(A, b; maxiter=size(A, 2), restart=min(length(b), size(A, 2)), se
             k += 1
             ε = scale * precision_strategy(res / bheta, tol) # target for ‖E v_k‖
             # no estimate before the first column of H̄: the first product is accurate
-            estimate_sigma && (ε = k > 1 ? ε * sigma_over_m(H_raw, k - 1, residuals, tol) : 0.0)
+            estimate_sigma && (ε = k > 1 ? ε * sigma_over_m(H, k - 1, residuals, tol, wσ) : 0.0)
             η = calibrated(ε, Q[k])
             A_iterable isa HMatrices.ITerm && (A_iterable.rtol = η)
             push!(eta, calibrate ? min(ε, 1.0) : η)
@@ -205,21 +208,25 @@ function igmres(A, b; maxiter=size(A, 2), restart=min(length(b), size(A, 2)), se
             end
         end
         # new cycle from the current iterate, with an exact residual
+        it < maxiter || break
         corrected || (x0 = gcro_solution(x0, Q, y, U, B, k); r0 = b - accurate_mul(A, x0); log_accurate())
         # ponytail: real problems would need real Schur vectors, skipped (complex conjugate pairs)
-        if recycle > 0 && T <: Complex && it < maxiter
-            U, θ = harmonic_ritz_vectors(U, C, Q, H_raw, B, k, recycle)
+        if recycle > 0 && T <: Complex
+            # harmonic Ritz vectors of (I - Cd Cdᴴ)A in span([Ur V_k]), Ur the recycled part of U
+            Z, θ = harmonic_ritz_vectors(U[:, pd+1:end], C[:, pd+1:end], Q, H_raw, [Bk[pd+1:end] for Bk in B], k, recycle)
             ηU = 0.0
             if relaxed_recycling && A_iterable isa HMatrices.ITerm
                 εU = scale * minimum(abs, θ) * precision_strategy(norm(r0) / bheta, tol)
-                ηU = calibrate ? calibrated(εU, U[:, 1]) : min(εU / normA, 1.0)
+                ηU = calibrate ? calibrated(εU, Z[:, 1]) : min(εU / normA, 1.0)
                 A_iterable.rtol = ηU
             end
             mulU(u) = ηU == 0 ? accurate_mul(A, u) : mul!(similar(u), A_iterable, u, 1, 0; threads=false)
-            F = qr(reduce(hcat, [mulU(u) for u in eachcol(U)])) # C = A*U
-            eta_log === nothing || append!(eta_log, fill(ηU, size(U, 2)))
-            C = Matrix(F.Q)
-            U = U / F.R
+            AZ = reduce(hcat, [mulU(z) for z in eachcol(Z)])
+            eta_log === nothing || append!(eta_log, fill(ηU, size(Z, 2)))
+            D = Cd' * AZ # A(Z - Ud D) = AZ - Cd D ⊥ Cd
+            F = qr(AZ - Cd * D)
+            C = [Cd Matrix(F.Q)]
+            U = [Ud (Z - Ud * D) / F.R]
         end
     end
     throw("Maximum iteration reached")

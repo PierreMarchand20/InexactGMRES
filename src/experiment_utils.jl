@@ -50,13 +50,14 @@ Direct Dirichlet CFIE `(I/2 + D' - ik*S) ∂ₙu = ∂ₙuᵢ - ik*uᵢ`, the tr
 the total field. Same return values.
 """
 function assemble_cfie_direct(Q, k; ε=1e-8, θ=π / 4)
-    pde = Inti.Helmholtz(; k, dim=2)
+    dim = length(first(Q).coords)
+    pde = Inti.Helmholtz(; k, dim)
     SL = Inti.SingleLayerKernel(pde)
     ADL = Inti.AdjointDoubleLayerKernel(pde)
     K = let SL = SL, ADL = ADL, k = k
         (t, q) -> ADL(t, q) - im * k * SL(t, q)
     end
-    d = SVector(cos(θ), sin(θ))
+    d = dim == 2 ? SVector(cos(θ), sin(θ)) : SVector(cos(θ), sin(θ), 0.0)
     uᵢ = (x) -> exp(im * k * dot(x, d))
     g = map(q -> (im * k * dot(d, q.normal) - im * k) * uᵢ(q.coords), Q)
     L = Inti.assemble_hmatrix(Inti.IntegralOperator(K, Q, Q); rtol=ε)
@@ -290,8 +291,8 @@ end
 Base.size(P::Projected) = size(P.A)
 function LinearAlgebra.mul!(y::AbstractVector, P::Projected, x::AbstractVector, α::Number, β::Number)
     w = InexactGMRES.accurate_mul(P.A, x)
-    y .= w .- P.C * (P.C' * w)
-    return y
+    w .-= P.C * (P.C' * w)
+    return iszero(β) ? (y .= α .* w) : (y .= α .* w .+ β .* y)
 end
 
 """
