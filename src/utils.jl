@@ -238,6 +238,26 @@ function dropped_term_estimate(H::HMatrices.HMatrix, x, η)
 end
 
 """
+    sigma_over_m(H_raw, k, residuals, tol; window=10)
+
+On-the-fly estimate of the Simoncini-Szyld factor `σ_m(H̄_m)/m` after `k`
+iterations of the cycle: `σ_min(H̄_k)` over `m̂ = k + ` the iterations still
+needed to reach `tol` at the mean convergence rate of the last `window`
+relative residuals.
+"""
+function sigma_over_m(H_raw, k, residuals, tol; window=10)
+    Hbar = zeros(eltype(H_raw[1]), k + 1, k)
+    for j in 1:k
+        Hbar[1:(j+1), j] = H_raw[j]
+    end
+    σ = svdvals(Hbar)[end] # ponytail: full SVD each iteration, O(k³); an incremental condition estimator if k gets large
+    w = min(window, length(residuals) - 1)
+    ρ = w > 0 ? (residuals[end] / residuals[end-w])^(1 / w) : 1.0
+    remaining = ρ < 1 ? max(log(tol / residuals[end]) / log(ρ), 0.0) : float(k) # no rate yet: assume as many again
+    return σ / (k + remaining)
+end
+
+"""
     gcro_solution(x0, Q, y, U, B, k)
 
 Iterate `x0 + V_k y - U B y` of a GCRO cycle: with `C = A U`, `B = Cᴴ A V_k` and

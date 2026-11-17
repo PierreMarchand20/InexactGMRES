@@ -11,7 +11,7 @@ include("utils.jl")
 
 """
     igmres(A, b; maxiter, restart, see_r, tol, precision_strategy=rel_to_eps, track_true_residual=false, track_bound=false,
-           max_corrections=10, correction_log=nothing, recycle=10, relaxed_recycling=false, calibrate=false, eta_log=nothing, deflation=nothing)
+           max_corrections=10, correction_log=nothing, recycle=10, relaxed_recycling=false, calibrate=false, estimate_sigma=false, eta_log=nothing, deflation=nothing)
 
 `precision_strategy(res, tol)` computes the relative tolerance used for the
 approximate matrix-vector product at each iteration, given the current
@@ -74,6 +74,14 @@ decade of `η` (it depends little on `v`), and the product uses `η = target/c`.
 The recycling target is then `|θ_min|` times the Arnoldi one, without `‖A‖`.
 Each estimate is logged as `NaN` in `eta_log`.
 
+With `estimate_sigma=true`, the tolerances from `precision_strategy` are
+multiplied by an on-the-fly estimate of the Simoncini-Szyld factor
+`σ_m(H̄_m)/m`: `σ_min(H̄_{k-1})` of the current cycle over
+`m̂ = k + ` the iterations still needed at the convergence rate of the last
+10 iterations. `σ_min(H̄_{k-1})` decreases with `k` (interlacing), so it
+overestimates `σ_m` early on. Meant for `precision_strategy=rel_to_eps`
+(`ℓ = 1`), ideally with `calibrate=true`.
+
 `deflation`, a matrix whose columns span an approximate invariant subspace
 (e.g. quasimodes), deflates the solve from the start the same way (one
 accurate matvec per column).
@@ -81,7 +89,7 @@ accurate matvec per column).
 function igmres(A, b; maxiter=size(A, 2), restart=min(length(b), size(A, 2)), see_r=false, tol=sqrt(eps()),
                 precision_strategy=rel_to_eps, track_true_residual=false, track_bound=false,
                 max_corrections=10, correction_log=nothing, recycle=10, relaxed_recycling=false, calibrate=false,
-                eta_log=nothing, deflation=nothing)
+                estimate_sigma=false, eta_log=nothing, deflation=nothing)
     T = promote_type(eltype(A), eltype(b))
     bheta = norm(b)
     residuals = Float64[]
@@ -99,7 +107,7 @@ function igmres(A, b; maxiter=size(A, 2), restart=min(length(b), size(A, 2)), se
     calib = Dict{Int,Float64}() # c = ‖E v‖/(η‖v‖) per decade of η
     # η such that ‖E v‖/‖v‖ ≈ ε, measuring c when η enters a new decade
     function calibrated(ε, v)
-        (calibrate && A_iterable isa HMatrices.ITerm) || return min(ε, 1.0)
+        (calibrate && A_iterable isa HMatrices.ITerm && ε > 0) || return min(ε, 1.0)
         c = 1.0
         for _ in 1:2 # η = ε/c can move to another decade once
             η = min(ε / c, 1.0)
@@ -138,6 +146,8 @@ function igmres(A, b; maxiter=size(A, 2), restart=min(length(b), size(A, 2)), se
         while k < restart && it < maxiter
             k += 1
             ε = scale * precision_strategy(res / bheta, tol) # target for ‖E v_k‖
+            # no estimate before the first column of H̄: the first product is accurate
+            estimate_sigma && (ε = k > 1 ? ε * sigma_over_m(H_raw, k - 1, residuals, tol) : 0.0)
             η = calibrated(ε, Q[k])
             A_iterable isa HMatrices.ITerm && (A_iterable.rtol = η)
             push!(eta, calibrate ? min(ε, 1.0) : η)
