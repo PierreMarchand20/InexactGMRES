@@ -126,23 +126,34 @@ Loads `data/\$geo.geo` (a half-elliptical-shell cavity, parametrized by the
 Gmsh DefineConstant's `npplo`/`k`) at the given wavenumber `k`, assembles the
 Dirichlet CFIE H-matrix and RHS. `geo` can be swapped for
 `"elliptic_cavity_bigger_2D"` to use the more closed variant (shell cut at
-x = cos(9π/10) instead of cos(7π/10), so a narrower mouth). `direct=true`
+x = cos(9π/10) instead of cos(7π/10), so a narrower mouth), and for the 3D
+versions `"elliptic_cavity_3D"` and `"elliptic_cavity_bigger_3D"` (prolate
+spheroidal shells, meshed with triangles; `qorder` then defaults to 2). `direct=true`
 assembles [`assemble_cfie_direct`](@ref) instead. Returns `(; L, g, pde, uᵢ,
 Q, meshsize)`.
 """
-function cavity_problem(k; geo="elliptic_cavity_2D", npplo=10, qorder=4, gorder=2, ε=1e-8, θ=π / 4, direct=false)
+function cavity_problem(k; geo="elliptic_cavity_2D", npplo=10, qorder=nothing, gorder=2, ε=1e-8, θ=π / 4, direct=false)
     meshsize = 2π / (npplo * k)
+    dim = endswith(geo, "3D") ? 3 : 2
+    qorder = something(qorder, dim == 3 ? 2 : 4) # 3D: same as sphere_problem
     filename = joinpath(pkgdir(InexactGMRES), "data", "$geo.geo")
     gmsh.initialize()
     gmsh.onelab.set("""[{"type":"number","name":"npplo","values":[$npplo]},{"type":"number","name":"k","values":[$k]}]""")
     gmsh.open(filename)
-    gmsh.model.mesh.generate(1)
+    gmsh.model.mesh.generate(dim - 1)
+    # 3D: after OCC booleans some surfaces are stored with the opposite orientation
+    # to the volume's boundary (negative tags), which Inti would keep: reverse them
+    if dim == 3
+        for (_, vol) in gmsh.model.getEntities(3), (_, s) in gmsh.model.getBoundary([(3, vol)], false, true)
+            s < 0 && gmsh.model.mesh.reverse([(2, -s)])
+        end
+    end
     gmsh.model.mesh.setOrder(gorder)
-    msh = Inti.import_mesh(; dim=2)
+    msh = Inti.import_mesh(; dim)
     gmsh.finalize()
 
     ents = Inti.entities(msh)
-    Ω = Inti.Domain(e -> Inti.geometric_dimension(e) == 2, ents)
+    Ω = Inti.Domain(e -> Inti.geometric_dimension(e) == dim, ents)
     Γ = Inti.boundary(Ω)
     Γ_msh = view(msh, Γ)
     Q = Inti.Quadrature(Γ_msh; qorder)
