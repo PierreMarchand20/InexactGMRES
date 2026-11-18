@@ -262,10 +262,44 @@ OpenCASCADE leaves the inner surface and the rim with inverted normals;
     - ℓ = 1 saves 36–46% of the work but adds 10–15% iterations and one
     restart. Relaxed recycling makes the restart cheap, but in time it is no
     better than the estimated strategy.
-- **Caveat:** these four frequencies avoid the resonances (σ_m ≥ 0.1, against
-  1e-7 at a 2D resonance). A sweep of the bigger cavity over k = 4–12 in steps
-  of 0.25 (`src/helmholtz_dirichlet_cfie_cavity_3D_frequency_sweep.jl`) looks
-  for them.
+**Fine frequency sweep** (bigger cavity, k = 4–12 in steps of 0.25, 33
+values, `src/helmholtz_dirichlet_cfie_cavity_3D_frequency_sweep.jl`)
+
+| | σ/m | ℓ = 1 | estimated |
+|---|---|---|---|
+| iterations (exact: 43 on average, 26–70) | +0% | +10% | +0.1% |
+| restarts (average) | 0 | 1.03 | 0.06 (2 of 33 k) |
+| work, average (range) | 0.77 (0.69–0.93) | 0.72 (0.52–1.20) | 0.73 (0.65–0.92) |
+| speed-up, average | 1.16 | 1.10 | 1.15 |
+
+- **No strong 3D resonance in this range.** σ_m dips at k ≈ 5.5, 6.5, 7.75,
+  8.25, 9, 10.5, 10.75, 11.75. The deepest is 0.0098 at k = 10.5, against
+  about 0.25 elsewhere and 1e-7 at a 2D resonance. The cavity leaks too much
+  at these frequencies.
+- **The gain holds at the dips.** At k = 10.5 exact GMRES needs 65
+  iterations: the estimated strategy needs 66 (1 restart, work 0.84), and ℓ = 1
+  needs 82 (+26%) but still has work 0.66, thanks to relaxed recycling.
+- **The worst points are not dips:** they come from the singular correction
+  (k = 4.25, 5.75, 8.5, see below). Without these three points the averages
+  are 0.75 · 0.68 · 0.71 for the work and 1.17 · 1.12 · 1.17 for the speed-up.
+
+**Singular correction spilling into low-rank blocks.** At k = 4.25, 5.75 and
+8.5 the H-matrix stores more entries than a dense matrix (compression 0.58,
+0.66 and 0.93, against 1.4–3.3 around them).
+
+- `Inti.adaptive_correction` picks its correction distance from the largest
+  element, with a heuristic that jumps by steps: about 2 element sizes for the
+  double layer at k = 4, but 2.9–3.7 at these three k.
+- The correction then has 2.3–3.2× more nonzeros per row (420–570 against
+  180), and many fall in admissible blocks. `axpy!` adds each of those as a
+  rank-one term, which is never truncated.
+- It hurts the exact and relaxed solves alike, but it lowers the relaxation
+  gain (work about 0.92 at those k).
+- **Possible fixes:**
+    - a fixed correction distance proportional to the mesh size;
+    - adding the correction to the H-matrix as a compressed low-rank update
+    instead of rank-one terms;
+    - applying it as a separate sparse product.
 
 ## 12. Where the time goes (bigger 3D cavity, k = 12)
 
@@ -393,15 +427,17 @@ Work relative to exact GMRES, restarts in parentheses:
 1. **Track the gap instead of bounding it.** Use the calibrated estimates in
    Σ‖E_j v_j‖|y_j| and tighten η only when needed. It could close the 10%
    between the safe strategy and ℓ = 1.
-2. **3D resonances.** Finish the fine sweep of the bigger 3D cavity and check
-   whether the gain holds at a resonance; if not, deflation with approximate
-   spheroidal quasimodes.
-3. **A deflation-aware σ estimate**, and cheaper restarts after deflation
+2. **3D resonances.** The fine sweep found only mild dips (σ_m ≥ 0.01) for
+   k ≤ 12. Stronger trapping needs higher k or a narrower mouth; deflation
+   with spheroidal quasimodes only if relaxation then breaks down.
+3. **Singular correction in 3D** (section 11): keep it out of the low-rank
+   blocks.
+4. **A deflation-aware σ estimate**, and cheaper restarts after deflation
    (skip recycling when deflation already handles the trapped modes).
-4. **Work in time, not entries.** Weight dense entries by their measured cost
+5. **Work in time, not entries.** Weight dense entries by their measured cost
    (about 1.8× a low-rank entry) so the work curves match the speed-ups.
-5. **More robust timings** (best of several runs) for the paper.
-6. **GCR variant with residual replacement** (van der Vorst–Ye style). An
+6. **More robust timings** (best of several runs) for the paper.
+7. **GCR variant with residual replacement** (van der Vorst–Ye style). An
    open idea, not tried.
 
 ## Main message so far
@@ -411,8 +447,8 @@ Work relative to exact GMRES, restarts in parentheses:
     - about 20% of the work on the disk;
     - about 45% on the sphere at large k, with a 1.3–1.4× speed-up, and
       increasing with k;
-    - 25–45% on the 3D cavities despite trapping, with a 1.1–1.3× speed-up
-      (away from resonances so far).
+    - about 25–30% on the 3D cavity despite trapping, with a 1.15× speed-up on
+      average over k = 4–12, including the mild resonances found there.
 - In 2D with trapping, the iterations relaxation adds along the slow modes
   cancel the savings. Deflation removes most of that slowdown, but the
   accurate deflation products then keep the work ratio at about 1.
