@@ -24,7 +24,14 @@ matrix-vector product can be truncated at a tolerance η (`HMatrices.ITerm`).
     - **Work:** all products of a solve, each weighted by the share of H-matrix
     entries it uses, divided by the work of exact GMRES. It is independent of
     the implementation and does not count orthogonalization or other overhead.
-    - **Speed-up:** exact time divided by relaxed time.
+    - **Speed-up:** exact GMRES's solve time divided by the relaxed solve's,
+    on the same assembled H-matrix with the same serial product, for one
+    right-hand side. It leaves out meshing and assembly, which dominate a
+    single solve: on the bigger 3D cavity at k = 12, assembly takes about
+    60 s and exact GMRES about 8.5 s, so a 1.2× speed-up saves about 1.4 s,
+    about 2% of the total. The gain matters when the assembled matrix is
+    reused: with 100 right-hand sides (incidence directions) the solves take
+    about 850 s, and 1.2× saves about 18% of the total.
 
 ## 2. Relaxation strategy
 
@@ -164,6 +171,31 @@ relaxed recycling.
 - No more margin than Helmholtz in 2D, so a Laplace sweep is not worth
   adding.
 
+**3D** (scratch study `laplace3d.jl`): exterior Dirichlet, u = D[σ] + S[σ],
+operator ½I + D + S, data G(x − x0) with x0 inside, so the exact solution is
+known (field error 1.8e-5 on the sphere, 6.8e-4 on the cavity). Same meshes
+as the Helmholtz runs at k = 4, 8, 12, 16 (n = 4k to 63k).
+
+| geometry | exact its | compression η = 0 · η = 1 (finest) | work σ/m · ℓ=1 · estimated | speed-up σ/m · ℓ=1 · estimated |
+|---|---|---|---|---|
+| sphere | 4 | 17 · 68 | 0.97 → 0.85 · 0.90 → 0.76 · 0.95 → 0.83 | 0.91–1.01 · 0.96–1.11 · 0.72–0.78 |
+| bigger cavity | 12 | 9.0 · 46 | 0.73 → 0.67 · 0.57 → 0.50 · 0.62 → 0.56 | 1.12–1.28 · 1.24–1.58 · 1.08–1.28 |
+
+(arrows: coarsest to finest mesh; no restarts anywhere)
+
+- **The per-product margin is as large as for Helmholtz** (compression at
+  η = 1 about 46–68), contrary to what the small Laplace ranks suggested.
+- **What limits the gain is the iteration count.** On the sphere GMRES
+  converges in 4 iterations: the first product (accurate for the estimated
+  strategy) and the final true-residual check weigh a lot, and the residual
+  falls so fast that few products can be coarse. The estimated strategy is
+  even slower than exact GMRES there, its error estimates being pure
+  overhead.
+- On the cavity (12 iterations) the gain is like Helmholtz on convex bodies:
+  44–50% of the work with ℓ = 1, 1.5× faster at the finer meshes.
+- **Rule of thumb:** relaxation needs both a large per-product margin and
+  enough iterations to spread the budget over.
+
 ## 9. Inexact iterative refinement (negative result)
 
 Outer loop: x += d, where A d ≈ r is solved to η_in with coarse products, and
@@ -189,8 +221,9 @@ r = b − A x is computed with one accurate product.
 
 Same CFIE as the disk, on the unit sphere with second-order triangles
 (`sphere_problem`, `src/helmholtz_dirichlet_cfie_sphere_frequency_sweep.jl`).
-The scattered field matches the Mie series to 6e-5 at k = 4 and 8e-6 at
-k = 18.
+The scattered field matches the Mie series to 1.4e-4 at k = 4 and 1.0e-5 at
+k = 18 (with the fixed correction distance of section 11; 6e-5 and 8e-6 with
+Inti's default).
 
 **Frequency sweep** (relaxed recycling; "estimated" is the practical safe
 strategy of section 15)
@@ -198,10 +231,14 @@ strategy of section 15)
 | k | n | exact its | work σ/m · ℓ=1 · estimated | speed-up σ/m · ℓ=1 · estimated | compression (η = 0 · η = 1) |
 |---|---|---|---|---|---|
 | 4 | 3.7k | 9 | 0.82 · 0.72 · 0.76 | 1.09 · 1.20 · 1.05 | 1.8 · 4.7 |
-| 8 | 15k | 12 | 0.71 · 0.59 · 0.66 | 1.22 · 1.37 · 1.12 | 4.3 · 18 |
-| 12 | 33k | 13 | 0.69 · 0.57 · 0.65 | 1.23 · 1.37 · 1.18 | 7.5 · 36 |
-| 16 | 59k | 14 | 0.67 · 0.54 · 0.63 | 1.42 · 1.61 · 1.30 | 11 · 68 |
-| 18 | 74k | 14 | 0.68 · 0.55 · 0.65 | 1.25 · 1.38 · 0.99 | 13 · 78 |
+| 6 | 8.4k | 11 | 0.74 · 0.63 · 0.69 | 1.32 · 1.46 · 1.19 | 3.0 · 10 |
+| 8 | 15k | 12 | 0.70 · 0.58 · 0.65 | 1.21 · 1.40 · 1.15 | 4.3 · 18 |
+| 10 | 23k | 12 | 0.71 · 0.59 · 0.66 | 1.15 · 1.36 · 1.18 | 5.9 · 27 |
+| 12 | 33k | 13 | 0.69 · 0.57 · 0.65 | 1.12 · 1.60 · 1.58 | 7.5 · 36 |
+| 14 | 45k | 13 | 0.69 · 0.56 · 0.65 | 1.36 · 1.85 · 1.46 | 9.4 · 51 |
+| 16 | 59k | 14 | 0.67 · 0.54 · 0.63 | 1.36 · 1.55 · 1.33 | 11 · 68 |
+| 18 | 74k | 14 | 0.68 · 0.55 · 0.65 | 1.20 · 1.38 · 1.18 | 13 · 78 |
+| average | | | 0.71 · 0.59 · 0.67 | 1.23 · 1.48 · 1.26 | |
 
 - **Why 3D does better:** the dense share falls with k (28% at k = 5, 14%
   at k = 15), since 3D ranks grow faster than in 2D. A product at η = 1 costs
@@ -210,15 +247,14 @@ strategy of section 15)
 - **Work:**
     - ℓ = 1 saves about 45% at large k;
     - the safe estimated strategy saves about 35%.
-- **Time:** 1.2–1.45× faster for ℓ = 1, 1.05–1.3× for the estimated
-  strategy.
-    - Truncated products save less in time than in entries, because the dense
-      blocks and the per-block overhead weigh more.
-    - Each point is a single timing, so the values are noisy (k = 14 is an
-      outlier at 1.9–2.4).
+- **Time:** 1.48× faster on average for ℓ = 1, 1.26× for the estimated
+  strategy. About 85% of the saved work becomes saved time (speed-up × work
+  ≈ 0.84–0.87): truncated products save less in time than in entries,
+  because the dense blocks and the per-block overhead weigh more (section 12).
+    - The largest problems (k = 12–14) remain the noisiest points.
 - **This is the most promising case so far.**
 
-**Timing pitfalls on large problems** (now fixed in `frequency_sweep`)
+**Timing pitfalls** (now fixed in `frequency_sweep`)
 
 - **First pass after assembly.** It is 3× slower (0.62 s against 0.20 s per
   product at k = 18), and was charged to the exact solve, which runs first.
@@ -226,6 +262,15 @@ strategy of section 15)
   timing.
 - **Compilation.** A warm-up with different closures left compilation in the
   first point. The first k is now run twice instead.
+- **Single timings are not enough.** Other jobs on the machine (a CI run),
+  or a slow spell such as a change of core on this M1 Pro, gave speed-ups
+  from 0.14 to 115. Back-to-back repeats of one solver did not help: they
+  share the slow spell, and the estimated strategy, always timed right after
+  the heavy untimed runs, came out at 0.6 where a direct test gives 1.2.
+  Each solve's time is now its best over 5 rounds in which the four solvers
+  are interleaved, with a GC before each solve. Speed-up × work then varies
+  by only ±0.03–0.04 across k. All 3D sweeps were rerun this way; the 2D
+  sweeps (sections 6–7) still use single timings.
 
 ## 11. 3D: the elliptic cavities (trapping)
 
@@ -250,7 +295,9 @@ OpenCASCADE leaves the inner surface and the rim with inverted normals;
 | bigger | 12 | 38k | 5.6 · 26 | 0.098 | 59 | 66 (1) · 59 | 0.74 · 0.58 · 0.69 | 1.17 · 1.15 · 1.19 |
 | bigger | 16 | 63k | 8.2 · 45 | 0.20 | 72 | 80 (1) · 72 | 0.71 · 0.54 · 0.71 | 1.25 · 1.31 · 1.17 |
 
-σ/m never restarts and keeps the exact iteration counts.
+σ/m never restarts and keeps the exact iteration counts. These were single
+timings, before the correction fix and the interleaved timing; the sweep below
+supersedes them.
 
 - **Trapping is visible:** 46–72 iterations at k = 12–16, against 13–14 on
   the sphere, growing with k.
@@ -262,44 +309,134 @@ OpenCASCADE leaves the inner surface and the rim with inverted normals;
     - ℓ = 1 saves 36–46% of the work but adds 10–15% iterations and one
     restart. Relaxed recycling makes the restart cheap, but in time it is no
     better than the estimated strategy.
+
 **Fine frequency sweep** (bigger cavity, k = 4–12 in steps of 0.25, 33
 values, `src/helmholtz_dirichlet_cfie_cavity_3D_frequency_sweep.jl`)
 
 | | σ/m | ℓ = 1 | estimated |
 |---|---|---|---|
-| iterations (exact: 43 on average, 26–70) | +0% | +10% | +0.1% |
-| restarts (average) | 0 | 1.03 | 0.06 (2 of 33 k) |
-| work, average (range) | 0.77 (0.69–0.93) | 0.72 (0.52–1.20) | 0.73 (0.65–0.92) |
-| speed-up, average | 1.16 | 1.10 | 1.15 |
+| iterations (exact: 43 on average, 26–70) | +0% | +11% | +0.1% |
+| restarts (average) | 0 | 1.03 | 0.03 (only k = 10.5) |
+| work, average (range) | 0.73 (0.68–0.85) | 0.64 (0.56–0.73) | 0.68 (0.64–0.84) |
+| speed-up, average (range) | 1.20 (1.07–1.37) | 1.16 (0.99–1.27) | 1.22 (1.02–1.36) |
 
-- **No strong 3D resonance in this range.** σ_m dips at k ≈ 5.5, 6.5, 7.75,
-  8.25, 9, 10.5, 10.75, 11.75. The deepest is 0.0098 at k = 10.5, against
+All with the singular correction fix below, and interleaved timings (section
+10). Before the fix, k = 4.25, 5.75 and 8.5 had work about 0.92 for σ/m and
+the estimated strategy, and up to 1.20 for ℓ = 1.
+
+- **No strong 3D resonance in this range.** σ_m dips below 0.1 at k ≈ 5.5,
+  6.5, 7.75, 8.25, 9–9.25, 10.5, 10.75, 11.5–12. The deepest is 0.0098 at k = 10.5, against
   about 0.25 elsewhere and 1e-7 at a 2D resonance. The cavity leaks too much
   at these frequencies.
 - **The gain holds at the dips.** At k = 10.5 exact GMRES needs 65
   iterations: the estimated strategy needs 66 (1 restart, work 0.84), and ℓ = 1
   needs 82 (+26%) but still has work 0.66, thanks to relaxed recycling.
-- **The worst points are not dips:** they come from the singular correction
-  (k = 4.25, 5.75, 8.5, see below). Without these three points the averages
-  are 0.75 · 0.68 · 0.71 for the work and 1.17 · 1.12 · 1.17 for the speed-up.
+- **The estimated strategy** restarts only at k = 10.5, saves about 30% of
+  the work, and is the fastest on average: ℓ = 1 loses its larger work
+  savings to the restart it makes at every k.
+
+**Control: the closed spheroid** (`data/spheroid_3D.geo`, the outer shape
+(1.3, 0.6, 0.6) of the bigger cavity without its interior; convex, no
+trapping; k = 4–12 in steps of 0.5,
+`src/helmholtz_dirichlet_cfie_spheroid_frequency_sweep.jl`). Averages over the
+same 17 k:
+
+| | spheroid | bigger cavity |
+|---|---|---|
+| exact GMRES iterations | 15 (13–16) | 43 (26–65) |
+| ℓ = 1 extra iterations | +0.4% | +12% |
+| restarts, ℓ = 1 · estimated | 0.06 · 0 | 1.06 · 0.06 |
+| σ_m | 0.49–0.64 | 0.01–0.28 |
+| compression at η = 1 | 13.4 | 15.3 |
+| work σ/m · ℓ=1 · estimated | 0.70 · 0.59 · 0.64 | 0.73 · 0.64 · 0.68 |
+| speed-up σ/m · ℓ=1 · estimated | 1.27 · 1.42 · 1.27 | 1.21 · 1.16 · 1.22 |
+
+- **The per-product margin is the same** (compression at η = 1 about 14 on
+  both): the relaxed product is just as cheap on the cavity.
+- **Trapping costs only 3–5 points of work savings,** and 0.05–0.25 of
+  speed-up. σ_m is 3–50× smaller
+  on the cavity, so the safe strategies use tighter products, and ℓ = 1 adds
+  iterations and a restart per solve. Unlike in 2D, relaxation still pays.
+- **The savings grow with k on the spheroid,** as on the sphere: estimated
+  work 0.74 at k = 4, 0.59 at k = 12; speed-up 1.12 to 1.41.
+- **ℓ = 1 is not safe even on a convex body:** one restart at k = 10 (work
+  0.84, speed-up 0.91). The estimated strategy never restarts there.
+
+**Sphere cluster** (`data/sphere_cluster_3D.geo`: 3 × 3 × 2 spheres of radius
+0.25 with gaps of 0.1, CFIE; k = 4–14, n = 4k to 55k,
+`src/helmholtz_dirichlet_cfie_sphere_cluster_frequency_sweep.jl`)
+
+| | σ/m | ℓ = 1 | estimated |
+|---|---|---|---|
+| iterations (exact: 22–41) | +0% | +8% | +0.3% |
+| restarts | 0 | 1 at every k (2 at k = 14) | 1 (k = 8) |
+| work, average | 0.71 | 0.67 | 0.69 |
+| speed-up, average | 1.22 | 1.12 | 1.20 |
+
+- **Multiple scattering acts like mild trapping:** iterations grow from 22 to
+  41 with k, and σ_m dips to 0.034 at k = 9. Results are close to the
+  cavity's.
+- **ℓ = 1 restarts every time** and ends up the slowest.
+
+**Disk screen** (`screen_problem`: the unit disk in z = 0, an open surface, so
+a first-kind single-layer equation S σ = −uᵢ, oblique incidence; k = 4–32,
+n = 942 to 57k, `src/helmholtz_dirichlet_sl_screen_frequency_sweep.jl`)
+
+| | σ/m | ℓ = 1 | estimated |
+|---|---|---|---|
+| iterations (exact: 27 → 76, growing with n) | +0% | +10% | +0% |
+| restarts | 0 | 1 at every k | 1 (k = 16) |
+| work, average (k ≥ 20) | 0.89 (0.88) | 0.67 (0.55) | 0.73 (0.69) |
+| speed-up, average (k ≥ 20) | 1.07 (1.07) | 1.21 (1.33) | 1.19 (1.22) |
+
+- **σ_m is small and shrinks with n** (0.0076 to 0.001), so the σ/m oracle
+  asks for nearly accurate products and hardly gains.
+- **The estimated strategy does far better than the oracle** (work 0.69
+  against 0.88 at large k), restarts once, and its true residual stays at or
+  below tol. The Simoncini–Szyld bound is very pessimistic for this
+  first-kind operator, and the estimated σ_min(H̄_k), which overestimates
+  σ_m, uses part of that slack safely.
+- **ℓ = 1** saves the most work but restarts every time: 1.3–1.44× at the
+  largest meshes.
+- No reference solution yet (no simple closed form for the disk screen).
+
+**Field cuts** (`src/helmholtz_dirichlet_cfie_3D_field_cuts.jl`, total field
+in the plane z = 0, which contains the incident direction and the cavity's
+axis; `field_cut_<geometry>_k<k>.png`)
+
+- Outside, the sphere, the spheroid and the cavity look alike: standing waves
+  on the lit side, a bright band along the lower flank, a shadow.
+- The cavity differs near and inside the mouth. At k = 8 the interior field
+  is weak and disordered (|u| ≈ 0.2–0.4, 41 iterations). At k = 10.5, its
+  deepest σ_m dip, an axial mode with 5 lobes appears (|u| up to 0.8, 65
+  iterations).
+- Even there the interior field stays below the incident amplitude: k = 10.5
+  is near a cavity resonance, not on it. With a mouth this small the
+  resonances must be very narrow, so the 0.25 grid steps over them.
 
 **Singular correction spilling into low-rank blocks.** At k = 4.25, 5.75 and
-8.5 the H-matrix stores more entries than a dense matrix (compression 0.58,
-0.66 and 0.93, against 1.4–3.3 around them).
+8.5 the H-matrix stored more entries than a dense matrix (compression 0.58,
+0.66 and 0.93, against 1.4–3.3 around them). It is an assembly artefact that
+hurts the exact and relaxed solves alike.
 
-- `Inti.adaptive_correction` picks its correction distance from the largest
-  element, with a heuristic that jumps by steps: about 2 element sizes for the
-  double layer at k = 4, but 2.9–3.7 at these three k.
-- The correction then has 2.3–3.2× more nonzeros per row (420–570 against
-  180), and many fall in admissible blocks. `axpy!` adds each of those as a
-  rank-one term, which is never truncated.
-- It hurts the exact and relaxed solves alike, but it lowers the relaxation
-  gain (work about 0.92 at those k).
-- **Possible fixes:**
-    - a fixed correction distance proportional to the mesh size;
-    - adding the correction to the H-matrix as a compressed low-rank update
-    instead of rank-one terms;
-    - applying it as a separate sparse product.
+- `Inti.adaptive_correction` corrects each target against the elements within
+  `maxdist`. By default `maxdist` is counted in radii of the largest element,
+  an outlier whose size varies from mesh to mesh: 1.95 mesh sizes at k = 4,
+  but 2.9–3.7 at these three k.
+- The correction then has 2–3× more nonzeros per row, many in admissible
+  blocks, where `axpy!` adds each one as a rank-one term that is never
+  truncated.
+- **Fix:** the 3D problems pass `maxdist = 2·meshsize`. Compression at the
+  three k becomes 1.52, 2.11, 3.45. The scattered field does not change (7e-4
+  against a mesh twice as fine, on the cavity, for any `maxdist` from 1.5 to
+  4 mesh sizes).
+- The sphere sweep (section 10) was rerun with the fix too; Inti's default
+  picked 1.65–1.84 mesh sizes there, without spill-over, so only its Mie
+  error changed slightly.
+- **Side notes on Inti**, to report upstream at some point: its distance scan
+  tests only the +x, +y, +z directions and keeps the last one; and passing
+  `rtol` without `atol` sets `atol = 0`, which makes the adaptive quadrature
+  stall on vanishing double-layer integrals.
 
 ## 12. Where the time goes (bigger 3D cavity, k = 12)
 
@@ -430,13 +567,14 @@ Work relative to exact GMRES, restarts in parentheses:
 2. **3D resonances.** The fine sweep found only mild dips (σ_m ≥ 0.01) for
    k ≤ 12. Stronger trapping needs higher k or a narrower mouth; deflation
    with spheroidal quasimodes only if relaxation then breaks down.
-3. **Singular correction in 3D** (section 11): keep it out of the low-rank
-   blocks.
+3. **Report the Inti issues upstream** (section 11), outside the thesis
+   work.
 4. **A deflation-aware σ estimate**, and cheaper restarts after deflation
    (skip recycling when deflation already handles the trapped modes).
 5. **Work in time, not entries.** Weight dense entries by their measured cost
    (about 1.8× a low-rank entry) so the work curves match the speed-ups.
-6. **More robust timings** (best of several runs) for the paper.
+6. **Retime the 2D sweeps** with the interleaved best-of-5 timing (done for
+   all 3D sweeps, section 10).
 7. **GCR variant with residual replacement** (van der Vorst–Ye style). An
    open idea, not tried.
 
@@ -445,13 +583,24 @@ Work relative to exact GMRES, restarts in parentheses:
 - Relaxing the H-matrix product pays off when the per-product margin is
   large, which is the case in 3D:
     - about 20% of the work on the disk;
-    - about 45% on the sphere at large k, with a 1.3–1.4× speed-up, and
-      increasing with k;
-    - about 25–30% on the 3D cavity despite trapping, with a 1.15× speed-up on
-      average over k = 4–12, including the mild resonances found there.
+    - about 45% on the sphere at large k with ℓ = 1 (1.48× speed-up on
+      average), 33% with the estimated strategy (1.26×);
+    - about 36% on the closed spheroid (k = 4–12), increasing with k, with a
+      1.27× speed-up for the estimated strategy;
+    - about 32% on the 3D cavity despite trapping, with a 1.22× speed-up on
+      average over k = 4–12, including the mild resonances found there:
+      trapping costs only 3–5 points against the spheroid.
 - In 2D with trapping, the iterations relaxation adds along the slow modes
   cancel the savings. Deflation removes most of that slowdown, but the
   accurate deflation products then keep the work ratio at about 1.
+- **More geometries in 3D give the same picture:** a sphere cluster
+  (multiple scattering) saves about 30% of the work, 1.2× faster; a disk
+  screen (first-kind operator, up to 76 iterations) about 30% with the
+  estimated strategy, which beats the σ/m oracle there.
+- **What the speed-up is a speed-up of:** the iterative solve only, for one
+  right-hand side. With assembly included, a 1.2× solve speed-up is about 2%
+  of a single solve's total time; it pays when the matrix is reused for many
+  right-hand sides (about 18% of the total with 100).
 - **Time gains are smaller than work gains:** the dense near field and the
   per-block overhead keep a coarse product at about 0.3–0.4 of an accurate
   one in 3D. Neither allocations nor the leaf size can change that.

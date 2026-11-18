@@ -16,14 +16,14 @@ using InexactGMRES
 ## own npplo/k DefineConstant convention).
 
 """
-    assemble_cfie(Q, k; ε=1e-8, θ=π/4)
+    assemble_cfie(Q, k; ε=1e-8, θ=π/4, correction=(;))
 
 Assembles the Dirichlet CFIE (D - ik*S) H-matrix and RHS on quadrature `Q`
 (2D or 3D), for a plane wave incident at angle `θ` (in the xy-plane). Returns a NamedTuple `(; L, g, pde,
 uᵢ)` -- `pde` and `uᵢ` (the incident wave) are included since callers doing
 field reconstruction (not just solving) need them too.
 """
-function assemble_cfie(Q, k; ε=1e-8, θ=π / 4)
+function assemble_cfie(Q, k; ε=1e-8, θ=π / 4, correction=(;))
     dim = length(first(Q).coords)
     pde = Inti.Helmholtz(; k, dim)
     SL = Inti.SingleLayerKernel(pde)
@@ -38,18 +38,18 @@ function assemble_cfie(Q, k; ε=1e-8, θ=π / 4)
     L = Inti.assemble_hmatrix(Lop; rtol=ε)
     Id = sparse((0.5 + 0im) * I, size(L))
     axpy!(1.0, Id, L)
-    axpy!(1.0, singular_correction(DL, SL, k, Q), L)
+    axpy!(1.0, singular_correction(DL, SL, k, Q; correction...), L)
     return (; L, g, pde, uᵢ)
 end
 
 """
-    assemble_cfie_direct(Q, k; ε=1e-8, θ=π/4)
+    assemble_cfie_direct(Q, k; ε=1e-8, θ=π/4, correction=(;))
 
 Direct Dirichlet CFIE `(I/2 + D' - ik*S) ∂ₙu = ∂ₙuᵢ - ik*uᵢ`, the transpose of
 [`assemble_cfie`](@ref)'s operator, whose unknown is the normal trace `∂ₙu` of
 the total field. Same return values.
 """
-function assemble_cfie_direct(Q, k; ε=1e-8, θ=π / 4)
+function assemble_cfie_direct(Q, k; ε=1e-8, θ=π / 4, correction=(;))
     dim = length(first(Q).coords)
     pde = Inti.Helmholtz(; k, dim)
     SL = Inti.SingleLayerKernel(pde)
@@ -62,20 +62,30 @@ function assemble_cfie_direct(Q, k; ε=1e-8, θ=π / 4)
     g = map(q -> (im * k * dot(d, q.normal) - im * k) * uᵢ(q.coords), Q)
     L = Inti.assemble_hmatrix(Inti.IntegralOperator(K, Q, Q); rtol=ε)
     axpy!(1.0, sparse((0.5 + 0im) * I, size(L)), L)
-    axpy!(1.0, singular_correction(ADL, SL, k, Q), L)
+    axpy!(1.0, singular_correction(ADL, SL, k, Q; correction...), L)
     return (; L, g, pde, uᵢ)
 end
 
 """
-    singular_correction(DL, SL, k, Q)
+    singular_correction(DL, SL, k, Q; kwargs...)
 
 Sparse correction of the singular and nearly singular entries of `DL - ik*SL`
-on `Q` (`Inti.adaptive_correction`). Without it, the Nyström matrix just
-drops the diagonal, an O(1) error at high k because of the `-ik*SL` term.
+on `Q` (`Inti.adaptive_correction`, which receives `kwargs`). Without it, the
+Nyström matrix just drops the diagonal, an O(1) error at high k because of
+the `-ik*SL` term.
+
+Every target is corrected against the elements within `maxdist` of it. By
+default Inti derives `maxdist` in steps of the radius of the largest element,
+which in 3D varies from mesh to mesh (2 to 3.7 mesh sizes on the bigger
+cavity); the extra entries land in low-rank blocks as rank-one terms, and the
+H-matrix can get bigger than a dense matrix. The 3D problems therefore pass
+`maxdist = 2 * meshsize`. If you also pass `rtol`, pass `atol` too: Inti
+otherwise sets `atol = 0`, and the nearly vanishing double-layer integrals
+then exhaust the adaptive quadrature.
 """
-function singular_correction(DL, SL, k, Q)
-    return Inti.adaptive_correction(Inti.IntegralOperator(DL, Q, Q)) -
-           im * k * Inti.adaptive_correction(Inti.IntegralOperator(SL, Q, Q))
+function singular_correction(DL, SL, k, Q; kwargs...)
+    return Inti.adaptive_correction(Inti.IntegralOperator(DL, Q, Q); kwargs...) -
+           im * k * Inti.adaptive_correction(Inti.IntegralOperator(SL, Q, Q); kwargs...)
 end
 
 """
@@ -116,7 +126,40 @@ function sphere_problem(k; npplo=10, qorder=2, gorder=2, ε=1e-8, θ=π / 4)
     gmsh.finalize()
     Ω = Inti.Domain(e -> Inti.geometric_dimension(e) == 3, Inti.entities(msh))
     Q = Inti.Quadrature(view(msh, Inti.boundary(Ω)); qorder)
-    return (; assemble_cfie(Q, k; ε, θ)..., Q, meshsize)
+    return (; assemble_cfie(Q, k; ε, θ, correction=(; maxdist=2meshsize))..., Q, meshsize)
+end
+
+"""
+    screen_problem(k; npplo=10, qorder=2, gorder=2, ε=1e-8, d=normalize(SVector(1.0, 0.5, -1.0)))
+
+Sound-soft unit disk screen in the plane z = 0 (an open surface, so there is no
+second-kind formulation): first-kind single-layer equation `S σ = -uᵢ` with
+`u = S[σ]`, for the plane wave `uᵢ = exp(ik x·d)` (oblique incidence by
+default). Second-order triangles of size `meshsize = 2π/(npplo*k)`; `σ`, the
+jump of the normal derivative, blows up like `1/√dist` at the rim. Returns `(;
+L, g, pde, uᵢ, Q, meshsize)`.
+"""
+function screen_problem(k; npplo=10, qorder=2, gorder=2, ε=1e-8, d=normalize(SVector(1.0, 0.5, -1.0)))
+    meshsize = 2π / (npplo * k)
+    gmsh.initialize()
+    gmsh.option.setNumber("General.Verbosity", 2)
+    gmsh.option.setNumber("Mesh.MeshSizeMax", meshsize)
+    gmsh.option.setNumber("Mesh.MeshSizeMin", meshsize)
+    gmsh.model.occ.addDisk(0, 0, 0, 1, 1)
+    gmsh.model.occ.synchronize()
+    gmsh.model.mesh.generate(2)
+    gmsh.model.mesh.setOrder(gorder)
+    msh = Inti.import_mesh(; dim=3)
+    gmsh.finalize()
+    Γ = Inti.Domain(e -> Inti.geometric_dimension(e) == 2, Inti.entities(msh))
+    Q = Inti.Quadrature(view(msh, Γ); qorder)
+    pde = Inti.Helmholtz(; k, dim=3)
+    SL = Inti.SingleLayerKernel(pde)
+    uᵢ = x -> exp(im * k * dot(x, d))
+    g = map(q -> -uᵢ(q.coords), Q)
+    L = Inti.assemble_hmatrix(Inti.IntegralOperator(SL, Q, Q); rtol=ε)
+    axpy!(1.0, Inti.adaptive_correction(Inti.IntegralOperator(SL, Q, Q); maxdist=2meshsize), L)
+    return (; L, g, pde, uᵢ, Q, meshsize)
 end
 
 """
@@ -157,7 +200,8 @@ function cavity_problem(k; geo="elliptic_cavity_2D", npplo=10, qorder=nothing, g
     Γ = Inti.boundary(Ω)
     Γ_msh = view(msh, Γ)
     Q = Inti.Quadrature(Γ_msh; qorder)
-    return (; (direct ? assemble_cfie_direct : assemble_cfie)(Q, k; ε, θ)..., Q, meshsize)
+    return (; (direct ? assemble_cfie_direct : assemble_cfie)(Q, k; ε, θ,
+        correction=dim == 3 ? (; maxdist=2meshsize) : (;))..., Q, meshsize)
 end
 
 ## Quasimodes of the elliptic cavity: Dirichlet eigenmodes of the inner ellipse
@@ -367,7 +411,7 @@ function deflated_tol_sweep(builder, k, tols, deflation)
 end
 
 """
-    frequency_sweep(builder, ks; tol, bound_factor=1.0, deflation=nothing)
+    frequency_sweep(builder, ks; tol, bound_factor=1.0, deflation=nothing, igmres_kwargs=(;), estimated=false, safety=0.25, repeats=5)
 
 For each `k` in `ks`, build a fresh problem via `builder(k)` and run
 `exact_gmres` once plus `igmres` twice -- same two heuristics as
@@ -377,13 +421,13 @@ res, t)`). `sigma_m`, the smallest singular value of the final Hessenberg
 matrix, and the iteration counts for all three solves are candidate
 signatures of a nearby scattering resonance.
 
-Timing uses a single `@elapsed` call per solve rather than
-`BenchmarkTools` (a full `@benchmark` per point, times 3 solves times
-dozens of k's, would add many minutes of pure benchmarking overhead); the
-first `k` is run twice so the first sweep point isn't contaminated by JIT
-compilation. This makes individual speedup values noisier than
-`tol_sweep`'s, but the trend across the whole sweep should still be
-visible.
+Each solve's time is its best over `repeats` rounds in which the solvers
+are interleaved (a GC before each solve), rather than a `BenchmarkTools`
+benchmark, which would add many minutes per point. A single run, or
+back-to-back repeats of one solver, was easily distorted by other jobs or a
+slow spell of the machine. The first `k`
+is run twice so the first sweep point isn't contaminated by JIT
+compilation.
 
 To check igmres actually solves the right problem, each heuristic is also
 run once more (untimed) with `track_true_residual=true`, recording the final
@@ -414,7 +458,7 @@ factor `safety` (default 0.25). It adds the columns `igmres_it_estimated`,
 `restarts_estimated`, `time_estimated`, `speedup_estimated`,
 `true_res_estimated` and `work_ratio_estimated`.
 """
-function frequency_sweep(builder, ks; tol, bound_factor=1.0, deflation=nothing, igmres_kwargs=(;), estimated=false, safety=0.25)
+function frequency_sweep(builder, ks; tol, bound_factor=1.0, deflation=nothing, igmres_kwargs=(;), estimated=false, safety=0.25, repeats=5)
     # the first k is run twice and its first row dropped: it compiles the
     # closures of the loop body, so that no timing includes compilation
     rows = map(vcat(first(ks), ks)) do k
@@ -424,21 +468,42 @@ function frequency_sweep(builder, ks; tol, bound_factor=1.0, deflation=nothing, 
         # collect the assembly's garbage and touch the whole matrix once: otherwise
         # the first timed solve pays for both (3x slower first pass on the sphere at k = 18)
         InexactGMRES.accurate_mul(L, g)
-        GC.gc()
-        exact_time = @elapsed ((exact_it, Hmat) = deflated_exact_gmres(L, g, U; tol))
+        exact_it, Hmat = deflated_exact_gmres(L, g, U; tol) # defines the σ(H_m) strategy
         sigma_m = svd(Hmat).S[end]
 
         sigma_strategy = (res, t) -> InexactGMRES.rel_to_eps(sigma_m / exact_it, res, t)
         constant_strategy = (res, t) -> InexactGMRES.rel_to_eps(bound_factor, res, t)
+        estimated_strategy = (res, t) -> InexactGMRES.rel_to_eps(safety, res, t)
 
-        restarts_sigma, restarts_constant = Int[], Int[] # iterations of the restarts after a failed true-residual check
-        eta_sigma, eta_constant = Float64[], Float64[]   # matvec tolerances actually used
-        GC.gc()
-        sigma_time = @elapsed ((_, _, igmres_it_sigma) = igmres(L, g; tol, precision_strategy=sigma_strategy, deflation=U,
-            correction_log=restarts_sigma, eta_log=eta_sigma, igmres_kwargs...))
-        GC.gc()
-        constant_time = @elapsed ((_, _, igmres_it_constant_factor) = igmres(L, g; tol, precision_strategy=constant_strategy, deflation=U,
-            correction_log=restarts_constant, eta_log=eta_constant, igmres_kwargs...))
+        # iterations of the restarts after a failed true-residual check, and
+        # matvec tolerances actually used (reset before each run)
+        restarts_sigma, restarts_constant, restarts_est = Int[], Int[], Int[]
+        eta_sigma, eta_constant, eta_est = Float64[], Float64[], Float64[]
+        solvers = [
+            () -> deflated_exact_gmres(L, g, U; tol),
+            () -> (empty!(restarts_sigma); empty!(eta_sigma);
+                igmres(L, g; tol, precision_strategy=sigma_strategy, deflation=U,
+                    correction_log=restarts_sigma, eta_log=eta_sigma, igmres_kwargs...)),
+            () -> (empty!(restarts_constant); empty!(eta_constant);
+                igmres(L, g; tol, precision_strategy=constant_strategy, deflation=U,
+                    correction_log=restarts_constant, eta_log=eta_constant, igmres_kwargs...)),
+        ]
+        estimated && push!(solvers, () -> (empty!(restarts_est); empty!(eta_est);
+            igmres(L, g; tol, deflation=U, estimate_sigma=true, calibrate=true, precision_strategy=estimated_strategy,
+                correction_log=restarts_est, eta_log=eta_est, igmres_kwargs...)))
+        # best of `repeats` rounds, the solvers interleaved within each round and
+        # a GC before each solve: back-to-back repeats of one solver share any
+        # slow spell of the machine (another job, a core change), which then
+        # biases the ratios between solvers
+        times = fill(Inf, length(solvers))
+        results = Vector{Any}(undef, length(solvers))
+        for _ in 1:repeats, (i, f) in enumerate(solvers)
+            GC.gc()
+            times[i] = min(times[i], @elapsed (results[i] = f()))
+        end
+        exact_time, sigma_time, constant_time = times[1:3]
+        igmres_it_sigma = results[2][3]
+        igmres_it_constant_factor = results[3][3]
         p = U === nothing ? 0 : size(U, 2)
         compression = InexactGMRES.effective_compression_ratio(L, 0.0)
 
@@ -449,13 +514,9 @@ function frequency_sweep(builder, ks; tol, bound_factor=1.0, deflation=nothing, 
 
         extra = (;)
         if estimated
-            restarts_est, eta_est = Int[], Float64[]
-            GC.gc()
-            time_est = @elapsed ((x_est, _, it_est) = igmres(L, g; tol, deflation=U, estimate_sigma=true, calibrate=true,
-                precision_strategy=(res, t) -> InexactGMRES.rel_to_eps(safety, res, t),
-                correction_log=restarts_est, eta_log=eta_est, igmres_kwargs...))
-            extra = (; igmres_it_estimated=it_est, restarts_estimated=length(restarts_est), time_estimated=time_est,
-                speedup_estimated=exact_time / time_est,
+            x_est, _, it_est = results[4]
+            extra = (; igmres_it_estimated=it_est, restarts_estimated=length(restarts_est), time_estimated=times[4],
+                speedup_estimated=exact_time / times[4],
                 true_res_estimated=norm(g - InexactGMRES.accurate_mul(L, x_est)) / norm(g),
                 work_ratio_estimated=relaxed_work(L, eta_est) / (exact_it + p))
         end
